@@ -1,6 +1,7 @@
 import os
-import sqlite3
 import threading
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 from flask import Flask
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -12,6 +13,7 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 TELEGRAM_CHANNEL = "@Vickyupdatemayor"
 TELEGRAM_LINK = "https://t.me/Vickyupdatemayor"
@@ -20,47 +22,78 @@ WHATSAPP_CHANNEL = "https://whatsapp.com/channel/0029VbDyRS18F2p6910NlS1j"
 REFERRAL_REWARD = 100
 MINIMUM_WITHDRAWAL = 700
 
+db_lock = threading.Lock()
+
+
 # =========================
 # DATABASE
 # =========================
 
-conn = sqlite3.connect("bot.db", check_same_thread=False)
-db_lock = threading.Lock()
+def get_connection():
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL environment variable is missing.")
 
-with db_lock:
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            balance INTEGER DEFAULT 0,
-            referrals INTEGER DEFAULT 0,
-            referred_by INTEGER,
-            referral_rewarded INTEGER DEFAULT 0
-        )
-    """)
-    conn.commit()
+    return psycopg2.connect(DATABASE_URL)
+
+
+def init_database():
+    with db_lock:
+        conn = get_connection()
+
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        user_id BIGINT PRIMARY KEY,
+                        username TEXT,
+                        balance INTEGER DEFAULT 0,
+                        referrals INTEGER DEFAULT 0,
+                        referred_by BIGINT,
+                        referral_rewarded INTEGER DEFAULT 0
+                    )
+                """)
+
+                conn.commit()
+
+        finally:
+            conn.close()
 
 
 def get_user(user_id, username=None):
     with db_lock:
-        row = conn.execute(
-            "SELECT * FROM users WHERE user_id = ?",
-            (user_id,)
-        ).fetchone()
+        conn = get_connection()
 
-        if not row:
-            conn.execute(
-                "INSERT INTO users (user_id, username) VALUES (?, ?)",
-                (user_id, username)
-            )
-            conn.commit()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT * FROM users WHERE user_id = %s",
+                    (user_id,)
+                )
 
-            row = conn.execute(
-                "SELECT * FROM users WHERE user_id = ?",
-                (user_id,)
-            ).fetchone()
+                row = cursor.fetchone()
 
-        return row
+                if not row:
+                    cursor.execute(
+                        """
+                        INSERT INTO users (user_id, username)
+                        VALUES (%s, %s)
+                        """,
+                        (user_id, username)
+                    )
+
+                    conn.commit()
+
+                    cursor.execute(
+                        "SELECT * FROM users WHERE user_id = %s",
+                        (user_id,)
+                    )
+
+                    row = cursor.fetchone()
+
+                return row
+
+        finally:
+            conn.close()
 
 
 def set_referrer(user_id, referrer_id):
@@ -68,80 +101,124 @@ def set_referrer(user_id, referrer_id):
         return False
 
     with db_lock:
-        user = conn.execute(
-            "SELECT referred_by FROM users WHERE user_id = ?",
-            (user_id,)
-        ).fetchone()
+        conn = get_connection()
 
-        if not user:
-            return False
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT referred_by FROM users WHERE user_id = %s",
+                    (user_id,)
+                )
 
-        if user[0] is not None:
-            return False
+                user = cursor.fetchone()
 
-        referrer = conn.execute(
-            "SELECT user_id FROM users WHERE user_id = ?",
-            (referrer_id,)
-        ).fetchone()
+                if not user:
+                    return False
 
-        if not referrer:
-            return False
+                if user[0] is not None:
+                    return False
 
-        conn.execute(
-            "UPDATE users SET referred_by = ? WHERE user_id = ?",
-            (referrer_id, user_id)
-        )
-        conn.commit()
+                cursor.execute(
+                    "SELECT user_id FROM users WHERE user_id = %s",
+                    (referrer_id,)
+                )
 
-        return True
+                referrer = cursor.fetchone()
+
+                if not referrer:
+                    return False
+
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET referred_by = %s
+                    WHERE user_id = %s
+                    """,
+                    (referrer_id, user_id)
+                )
+
+                conn.commit()
+                return True
+
+        finally:
+            conn.close()
 
 
 def reward_referrer(user_id):
     with db_lock:
-        row = conn.execute(
-            "SELECT referred_by, referral_rewarded FROM users WHERE user_id = ?",
-            (user_id,)
-        ).fetchone()
+        conn = get_connection()
 
-        if not row:
-            return False
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT referred_by, referral_rewarded
+                    FROM users
+                    WHERE user_id = %s
+                    """,
+                    (user_id,)
+                )
 
-        referrer_id, rewarded = row
+                row = cursor.fetchone()
 
-        if referrer_id is None or rewarded:
-            return False
+                if not row:
+                    return False
 
-        conn.execute(
-            """
-            UPDATE users
-            SET balance = balance + ?,
-                referrals = referrals + 1
-            WHERE user_id = ?
-            """,
-            (REFERRAL_REWARD, referrer_id)
-        )
+                referrer_id, rewarded = row
 
-        conn.execute(
-            "UPDATE users SET referral_rewarded = 1 WHERE user_id = ?",
-            (user_id,)
-        )
+                if referrer_id is None or rewarded:
+                    return False
 
-        conn.commit()
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET balance = balance + %s,
+                        referrals = referrals + 1
+                    WHERE user_id = %s
+                    """,
+                    (REFERRAL_REWARD, referrer_id)
+                )
 
-        return True
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET referral_rewarded = 1
+                    WHERE user_id = %s
+                    """,
+                    (user_id,)
+                )
+
+                conn.commit()
+                return True
+
+        finally:
+            conn.close()
 
 
 def get_stats(user_id):
     with db_lock:
-        row = conn.execute(
-            "SELECT balance, referrals FROM users WHERE user_id = ?",
-            (user_id,)
-        ).fetchone()
+        conn = get_connection()
 
-        if row:
-            return row
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT balance, referrals
+                    FROM users
+                    WHERE user_id = %s
+                    """,
+                    (user_id,)
+                )
 
-        return 0, 0
+                row = cursor.fetchone()
+
+                if row:
+                    return row
+
+                return 0, 0
+
+        finally:
+            conn.close()
 
 
 # =========================
@@ -188,7 +265,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     get_user(user.id, user.username)
 
-    # Check referral parameter
     if context.args:
         try:
             referrer_id = int(context.args[0])
@@ -301,7 +377,6 @@ async def check_membership(
 
         return
 
-    # Successful Telegram verification
     reward_referrer(user_id)
 
     keyboard = [
@@ -380,9 +455,7 @@ async def referrals(
     query = update.callback_query
     await query.answer()
 
-    balance, count = get_stats(
-        query.from_user.id
-    )
+    balance, count = get_stats(query.from_user.id)
 
     await query.message.edit_text(
         f"👥 *My Referrals*\n\n"
@@ -413,9 +486,7 @@ async def balance(
     query = update.callback_query
     await query.answer()
 
-    bal, count = get_stats(
-        query.from_user.id
-    )
+    bal, count = get_stats(query.from_user.id)
 
     await query.message.edit_text(
         f"💰 *Your Balance*\n\n"
@@ -480,9 +551,7 @@ async def withdraw(
     query = update.callback_query
     await query.answer()
 
-    bal, count = get_stats(
-        query.from_user.id
-    )
+    bal, count = get_stats(query.from_user.id)
 
     if bal < MINIMUM_WITHDRAWAL:
 
@@ -534,6 +603,13 @@ def main():
         raise ValueError(
             "BOT_TOKEN environment variable is missing."
         )
+
+    if not DATABASE_URL:
+        raise ValueError(
+            "DATABASE_URL environment variable is missing."
+        )
+
+    init_database()
 
     threading.Thread(
         target=run_server,
