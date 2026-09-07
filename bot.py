@@ -292,11 +292,35 @@ def admin_panel():
                 """)
 
                 users = cursor.fetchall()
+                cursor.execute("""
+    SELECT id, user_id, username, amount, status, created_at
+    FROM withdrawals
+    ORDER BY id DESC
+    LIMIT 100
+""")
+
+withdrawals = cursor.fetchall()
 
         finally:
             conn.close()
 
     rows = ""
+withdrawal_rows = ""
+
+for wid, user_id, username, amount, status, created_at in withdrawals:
+
+    username = username or "No username"
+
+    withdrawal_rows += f"""
+    <tr>
+        <td>{wid}</td>
+        <td>{user_id}</td>
+        <td>{username}</td>
+        <td>₦{amount:,}</td>
+        <td>{status}</td>
+        <td>{created_at}</td>
+    </tr>
+    """
 
     for user_id, username, balance, referrals in users:
 
@@ -428,9 +452,34 @@ def admin_panel():
 
             </table>
 
-        </div>
+</div>
 
-    </body>
+<h2>Withdrawal Requests</h2>
+
+<div class="table-container">
+
+    <table>
+
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Telegram ID</th>
+                <th>Username</th>
+                <th>Amount</th>
+                <th>Status</th>
+                <th>Date</th>
+            </tr>
+        </thead>
+
+        <tbody>
+            {withdrawal_rows}
+        </tbody>
+
+    </table>
+
+</div>
+
+</body>
     </html>
     """
 
