@@ -1,108 +1,57 @@
 import os
-import threading
-import psycopg2
-from psycopg2.extras import RealDictCursor
-
-from flask import Flask, request, Response
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+import logging
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
-    CallbackQueryHandler,
+    MessageHandler,
     ContextTypes,
+    filters,
 )
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-DATABASE_URL = os.environ.get("DATABASE_URL")
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
 
-TELEGRAM_CHANNEL = "@Vickyupdatemayor"
-TELEGRAM_LINK = "https://t.me/Vickyupdatemayor"
-WHATSAPP_CHANNEL = "https://whatsapp.com/channel/0029VbDyRS18F2p6910NlS1j"
-
-REFERRAL_REWARD = 100
-MINIMUM_WITHDRAWAL = 700
-
-db_lock = threading.Lock()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 
-# =========================
-# DATABASE
-# =========================
-
-def get_connection():
-    if not DATABASE_URL:
-        raise ValueError("DATABASE_URL environment variable is missing.")
-
-    return psycopg2.connect(DATABASE_URL)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text("Hello! I am active.")
 
 
-def init_database():
-    with db_lock:
-        conn = get_connection()
-
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS users (
-                        user_id BIGINT PRIMARY KEY,
-                        username TEXT,
-                        balance INTEGER DEFAULT 0,
-                        referrals INTEGER DEFAULT 0,
-                        referred_by BIGINT,
-                        referral_rewarded INTEGER DEFAULT 0
-                    )
-                """)
-
-                conn.commit()
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS withdrawals (
-                        id SERIAL PRIMARY KEY,
-                        user_id BIGINT NOT NULL,
-                        username TEXT,
-                        amount INTEGER NOT NULL,
-                        status TEXT DEFAULT 'pending',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-        finally:
-            conn.close()
+async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Welcomes new members who join directly (works in Groups/Supergroups)."""
+    for member in update.message.new_chat_members:
+        # Don't welcome the bot itself
+        if member.id == context.bot.id:
+            continue
+            
+        await update.message.reply_text(
+            f"Welcome to the group, {member.first_name}!"
+        )
 
 
-def get_user(user_id, username=None):
-    with db_lock:
-        conn = get_connection()
+def main() -> None:
+    if not BOT_TOKEN:
+        raise ValueError("BOT_TOKEN environment variable is missing!")
 
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    "SELECT * FROM users WHERE user_id = %s",
-                    (user_id,)
-                )
+    application = Application.builder().token(BOT_TOKEN).build()
 
-                row = cursor.fetchone()
+    application.add_handler(CommandHandler("start", start))
+    # Listens for new members entering group chats
+    application.add_handler(
+        MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member)
+    )
 
-                if not row:
-                    cursor.execute(
-                        """
-                        INSERT INTO users (user_id, username)
-                        VALUES (%s, %s)
-                        """,
-                        (user_id, username)
-                    )
+    logger.info("Bot starting...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-                    conn.commit()
 
-                    cursor.execute(
-                        "SELECT * FROM users WHERE user_id = %s",
-                        (user_id,)
-                    )
-
-                    row = cursor.fetchone()
-
-                return row
-
-        finally:
-            conn.close()
+if __name__ == "__main__":
+    main()
 
 
 def set_referrer(user_id, referrer_id):
