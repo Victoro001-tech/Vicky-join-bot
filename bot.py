@@ -3,7 +3,7 @@ import threading
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from flask import Flask
+from flask import Flask, request, Response
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -226,7 +226,204 @@ def get_stats(user_id):
 # =========================
 
 app = Flask(__name__)
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
 
+
+def check_admin_auth():
+    if not ADMIN_PASSWORD:
+        return False
+
+    auth = request.authorization
+
+    if not auth:
+        return False
+
+    return (
+        auth.username == "admin"
+        and auth.password == ADMIN_PASSWORD
+    )
+
+
+@app.route("/admin")
+def admin_panel():
+
+    if not check_admin_auth():
+        return Response(
+            "Admin login required.",
+            401,
+            {"WWW-Authenticate": 'Basic realm="Vicky Admin Panel"'}
+        )
+
+    with db_lock:
+        conn = get_connection()
+
+        try:
+            with conn.cursor() as cursor:
+
+                cursor.execute(
+                    "SELECT COUNT(*) FROM users"
+                )
+                total_users = cursor.fetchone()[0]
+
+                cursor.execute(
+                    "SELECT COALESCE(SUM(balance), 0) FROM users"
+                )
+                total_balance = cursor.fetchone()[0]
+
+                cursor.execute(
+                    "SELECT COALESCE(SUM(referrals), 0) FROM users"
+                )
+                total_referrals = cursor.fetchone()[0]
+
+                cursor.execute("""
+                    SELECT user_id, username, balance, referrals
+                    FROM users
+                    ORDER BY user_id DESC
+                    LIMIT 100
+                """)
+
+                users = cursor.fetchall()
+
+        finally:
+            conn.close()
+
+    rows = ""
+
+    for user_id, username, balance, referrals in users:
+
+        username = username or "No username"
+
+        rows += f"""
+        <tr>
+            <td>{user_id}</td>
+            <td>{username}</td>
+            <td>₦{balance:,}</td>
+            <td>{referrals}</td>
+        </tr>
+        """
+
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Vicky Admin Panel</title>
+
+        <meta name="viewport"
+              content="width=device-width, initial-scale=1">
+
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                margin: 0;
+                padding: 20px;
+                background: #f5f5f5;
+            }}
+
+            h1 {{
+                margin-bottom: 20px;
+            }}
+
+            .cards {{
+                display: grid;
+                grid-template-columns:
+                    repeat(auto-fit, minmax(180px, 1fr));
+                gap: 15px;
+                margin-bottom: 25px;
+            }}
+
+            .card {{
+                background: white;
+                padding: 20px;
+                border-radius: 12px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            }}
+
+            .number {{
+                font-size: 25px;
+                font-weight: bold;
+                margin-top: 8px;
+            }}
+
+            .table-container {{
+                overflow-x: auto;
+                background: white;
+                border-radius: 12px;
+                padding: 10px;
+            }}
+
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                min-width: 600px;
+            }}
+
+            th, td {{
+                padding: 12px;
+                border-bottom: 1px solid #ddd;
+                text-align: left;
+            }}
+
+            th {{
+                background: #f0f0f0;
+            }}
+        </style>
+    </head>
+
+    <body>
+
+        <h1>🔐 Vicky Admin Panel</h1>
+
+        <div class="cards">
+
+            <div class="card">
+                👥 Total Users
+                <div class="number">
+                    {total_users}
+                </div>
+            </div>
+
+            <div class="card">
+                💰 Total Balance
+                <div class="number">
+                    ₦{total_balance:,}
+                </div>
+            </div>
+
+            <div class="card">
+                🤝 Total Referrals
+                <div class="number">
+                    {total_referrals}
+                </div>
+            </div>
+
+        </div>
+
+        <h2>Users</h2>
+
+        <div class="table-container">
+
+            <table>
+
+                <thead>
+                    <tr>
+                        <th>Telegram ID</th>
+                        <th>Username</th>
+                        <th>Balance</th>
+                        <th>Referrals</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {rows}
+                </tbody>
+
+            </table>
+
+        </div>
+
+    </body>
+    </html>
+    """
 
 @app.route("/")
 def home():
