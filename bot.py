@@ -1,57 +1,84 @@
 import os
-import logging
-from telegram import Update
+import threading
+
+import psycopg2
+from flask import Flask
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CommandHandler,
-    MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
-    filters,
 )
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-logger = logging.getLogger(__name__)
+# =========================
+# SETTINGS
+# =========================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
+TELEGRAM_CHANNEL = "@Vickyupdatemayor"
+TELEGRAM_LINK = "https://t.me/Vickyupdatemayor"
+WHATSAPP_CHANNEL = "https://whatsapp.com/channel/0029VbDyRS18F2p6910NlS1j"
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("Hello! I am active.")
+REFERRAL_REWARD = 100
 
+db_lock = threading.Lock()
 
-async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Welcomes new members who join directly (works in Groups/Supergroups)."""
-    for member in update.message.new_chat_members:
-        # Don't welcome the bot itself
-        if member.id == context.bot.id:
-            continue
-            
-        await update.message.reply_text(
-            f"Welcome to the group, {member.first_name}!"
-        )
+# =========================
+# DATABASE
+# =========================
 
-
-def main() -> None:
-    if not BOT_TOKEN:
-        raise ValueError("BOT_TOKEN environment variable is missing!")
-
-    application = Application.builder().token(BOT_TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    # Listens for new members entering group chats
-    application.add_handler(
-        MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member)
-    )
-
-    logger.info("Bot starting...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+def get_connection():
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL environment variable is missing.")
+    return psycopg2.connect(DATABASE_URL)
 
 
-if __name__ == "__main__":
-    main()
+def init_database():
+    with db_lock:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """ CREATE TABLE IF NOT EXISTS users ( user_id BIGINT PRIMARY KEY, username TEXT, balance BIGINT NOT NULL DEFAULT 0, referrals INTEGER NOT NULL DEFAULT 0, referred_by BIGINT, referral_rewarded BOOLEAN NOT NULL DEFAULT FALSE ) """
+                )
+
+                # Safely add columns if an older users table already exists.
+                cursor.execute(
+                    """ ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT """
+                )
+                cursor.execute(
+                    """ ALTER TABLE users ADD COLUMN IF NOT EXISTS balance BIGINT NOT NULL DEFAULT 0 """
+                )
+                cursor.execute(
+                    """ ALTER TABLE users ADD COLUMN IF NOT EXISTS referrals INTEGER NOT NULL DEFAULT 0 """
+                )
+                cursor.execute(
+                    """ ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT """
+                )
+                cursor.execute(
+                    """ ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_rewarded BOOLEAN NOT NULL DEFAULT FALSE """
+                )
+
+                conn.commit()
+        finally:
+            conn.close()
+
+
+def get_user(user_id, username=None):
+    with db_lock:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """ INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET username = COALESCE(EXCLUDED.username, users.username) """,
+                    (user_id, username),
+                )
+                conn.commit()
+        finally:
+            conn.close()
 
 
 def set_referrer(user_id, referrer_id):
@@ -60,95 +87,59 @@ def set_referrer(user_id, referrer_id):
 
     with db_lock:
         conn = get_connection()
-
         try:
             with conn.cursor() as cursor:
+                # Only the first valid referrer is accepted.
                 cursor.execute(
-                    "SELECT referred_by FROM users WHERE user_id = %s",
-                    (user_id,)
+                    """ UPDATE users SET referred_by = %s WHERE user_id = %s AND referred_by IS NULL AND user_id <> %s AND EXISTS ( SELECT 1 FROM users WHERE user_id = %s ) """,
+                    (referrer_id, user_id, referrer_id, referrer_id),
                 )
-
-                user = cursor.fetchone()
-
-                if not user:
-                    return False
-
-                if user[0] is not None:
-                    return False
-
-                cursor.execute(
-                    "SELECT user_id FROM users WHERE user_id = %s",
-                    (referrer_id,)
-                )
-
-                referrer = cursor.fetchone()
-
-                if not referrer:
-                    return False
-
-                cursor.execute(
-                    """
-                    UPDATE users
-                    SET referred_by = %s
-                    WHERE user_id = %s
-                    """,
-                    (referrer_id, user_id)
-                )
-
+                changed = cursor.rowcount > 0
                 conn.commit()
-                return True
-
+                return changed
         finally:
             conn.close()
 
 
 def reward_referrer(user_id):
+    """Reward the referrer once, after the referred user passes the join check."""
     with db_lock:
         conn = get_connection()
-
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    """
-                    SELECT referred_by, referral_rewarded
-                    FROM users
-                    WHERE user_id = %s
-                    """,
-                    (user_id,)
+                    """ SELECT referred_by, referral_rewarded FROM users WHERE user_id = %s FOR UPDATE """,
+                    (user_id,),
                 )
 
                 row = cursor.fetchone()
 
                 if not row:
+                    conn.rollback()
                     return False
 
-                referrer_id, rewarded = row
+                referrer_id, already_rewarded = row
 
-                if referrer_id is None or rewarded:
+                if referrer_id is None or already_rewarded:
+                    conn.rollback()
                     return False
 
                 cursor.execute(
-                    """
-                    UPDATE users
-                    SET balance = balance + %s,
-                        referrals = referrals + 1
-                    WHERE user_id = %s
-                    """,
-                    (REFERRAL_REWARD, referrer_id)
+                    """ UPDATE users SET balance = balance + %s, referrals = referrals + 1 WHERE user_id = %s """,
+                    (REFERRAL_REWARD, referrer_id),
                 )
 
+                if cursor.rowcount != 1:
+                    conn.rollback()
+                    return False
+
                 cursor.execute(
-                    """
-                    UPDATE users
-                    SET referral_rewarded = 1
-                    WHERE user_id = %s
-                    """,
-                    (user_id,)
+                    """ UPDATE users SET referral_rewarded = TRUE WHERE user_id = %s """,
+                    (user_id,),
                 )
 
                 conn.commit()
                 return True
-
         finally:
             conn.close()
 
@@ -156,25 +147,14 @@ def reward_referrer(user_id):
 def get_stats(user_id):
     with db_lock:
         conn = get_connection()
-
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    """
-                    SELECT balance, referrals
-                    FROM users
-                    WHERE user_id = %s
-                    """,
-                    (user_id,)
+                    """ SELECT balance, referrals FROM users WHERE user_id = %s """,
+                    (user_id,),
                 )
-
                 row = cursor.fetchone()
-
-                if row:
-                    return row
-
-                return 0, 0
-
+                return row if row else (0, 0)
         finally:
             conn.close()
 
@@ -184,404 +164,7 @@ def get_stats(user_id):
 # =========================
 
 app = Flask(__name__)
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
 
-
-def check_admin_auth():
-    if not ADMIN_PASSWORD:
-        return False
-
-    auth = request.authorization
-
-    if not auth:
-        return False
-
-    return (
-        auth.username == "admin"
-        and auth.password == ADMIN_PASSWORD
-    )
-
-
-@app.route("/admin")
-def admin_panel():
-
-    if not check_admin_auth():
-        return Response(
-            "Admin login required.",
-            401,
-            {"WWW-Authenticate": 'Basic realm="Vicky Admin Panel"'}
-        )
-
-    with db_lock:
-        conn = get_connection()
-
-        try:
-            with conn.cursor() as cursor:
-
-                cursor.execute(
-                    "SELECT COUNT(*) FROM users"
-                )
-                total_users = cursor.fetchone()[0]
-
-                cursor.execute(
-                    "SELECT COALESCE(SUM(balance), 0) FROM users"
-                )
-                total_balance = cursor.fetchone()[0]
-
-                cursor.execute(
-                    "SELECT COALESCE(SUM(referrals), 0) FROM users"
-                )
-                total_referrals = cursor.fetchone()[0]
-
-                cursor.execute("""
-                    SELECT user_id, username, balance, referrals
-                    FROM users
-                    ORDER BY user_id DESC
-                    LIMIT 100
-                """)
-
-                users = cursor.fetchall()
-
-                cursor.execute("""
-                    SELECT id, user_id, username, amount, status, created_at
-                    FROM withdrawals
-                    ORDER BY id DESC
-                    LIMIT 100
-                """)
-
-                withdrawals = cursor.fetchall()
-
-        finally:
-            conn.close()
-
-    rows = ""
-    withdrawal_rows = ""
-
-    for wid, user_id, username, amount, status, created_at in withdrawals:
-
-        username = username or "No username"
-
-        withdrawal_rows += f"""
-        <tr>
-            <td>{wid}</td>
-            <td>{user_id}</td>
-            <td>{username}</td>
-            <td>₦{amount:,}</td>
-            <td>{status}</td>
-            <td>{created_at}</td>
-        </tr>
-        """
-
-    for user_id, username, balance, referrals in users:
-
-        username = username or "No username"
-
-        rows += f"""
-        <tr>
-            <td>{user_id}</td>
-            <td>{username}</td>
-            <td>₦{balance:,}</td>
-            <td>{referrals}</td>
-        </tr>
-        """
-
-    return f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Vicky Admin Panel</title>
-
-        <meta name="viewport"
-              content="width=device-width, initial-scale=1">
-
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                margin: 0;
-                padding: 20px;
-                background: #f5f5f5;
-            }}
-
-            h1 {{
-                margin-bottom: 20px;
-            }}
-
-            .cards {{
-                display: grid;
-                grid-template-columns:
-                    repeat(auto-fit, minmax(180px, 1fr));
-                gap: 15px;
-                margin-bottom: 25px;
-            }}
-
-            .card {{
-                background: white;
-                padding: 20px;
-                border-radius: 12px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-            }}
-
-            .number {{
-                font-size: 25px;
-                font-weight: bold;
-                margin-top: 8px;
-            }}
-
-            .table-container {{
-                overflow-x: auto;
-                background: white;
-                border-radius: 12px;
-                padding: 10px;
-            }}
-
-            table {{
-                width: 100%;
-                border-collapse: collapse;
-                min-width: 600px;
-@app.route("/admin")
-def admin_panel():
-
-    if not check_admin_auth():
-        return Response(
-            "Admin login required.",
-            401,
-            {"WWW-Authenticate": 'Basic realm="Vicky Admin Panel"'}
-        )
-
-    with db_lock:
-        conn = get_connection()
-
-        try:
-            with conn.cursor() as cursor:
-
-                cursor.execute(
-                    "SELECT COUNT(*) FROM users"
-                )
-                total_users = cursor.fetchone()[0]
-
-                cursor.execute(
-                    "SELECT COALESCE(SUM(balance), 0) FROM users"
-                )
-                total_balance = cursor.fetchone()[0]
-
-                cursor.execute(
-                    "SELECT COALESCE(SUM(referrals), 0) FROM users"
-                )
-                total_referrals = cursor.fetchone()[0]
-                cursor.execute("""
-                    SELECT user_id, username, balance, referrals
-                    FROM users
-                    ORDER BY user_id DESC
-                    LIMIT 100
-                """)
-
-                users = cursor.fetchall()
-
-                cursor.execute("""
-                    SELECT id, user_id, username, amount, status, created_at
-                    FROM withdrawals
-                    ORDER BY id DESC
-                    LIMIT 100
-                """)
-
-                withdrawals = cursor.fetchall()
-                    FROM users
-                    ORDER BY user_id DESC
-                    LIMIT 100
-                """)
-
-                users = cursor.fetchall()
-
-                cursor.execute("""
-                    SELECT id, user_id, username, amount, status, created_at
-                    FROM withdrawals
-                    ORDER BY id DESC
-                    LIMIT 100
-                """)
-
-                withdrawals = cursor.fetchall()
-
-        finally:
-            conn.close()
-
-    rows = ""
-    withdrawal_rows = ""
-
-    for wid, user_id, username, amount, status, created_at in withdrawals:
-
-        username = username or "No username"
-
-        withdrawal_rows += f"""
-        <tr>
-            <td>{wid}</td>
-            <td>{user_id}</td>
-            <td>{username}</td>
-            <td>₦{amount:,}</td>
-            <td>{status}</td>
-            <td>{created_at}</td>
-        </tr>
-        """
-
-    for user_id, username, balance, referrals in users:
-
-        username = username or "No username"
-
-        rows += f"""
-        <tr>
-            <td>{user_id}</td>
-            <td>{username}</td>
-            <td>₦{balance:,}</td>
-            <td>{referrals}</td>
-        </tr>
-        """
-
-    return f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Vicky Admin Panel</title>
-
-        <meta name="viewport"
-              content="width=device-width, initial-scale=1">
-
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                margin: 0;
-                padding: 20px;
-                background: #f5f5f5;
-            }}
-
-            h1 {{
-                margin-bottom: 20px;
-            }}
-
-            .cards {{
-                display: grid;
-                grid-template-columns:
-                    repeat(auto-fit, minmax(180px, 1fr));
-                gap: 15px;
-                margin-bottom: 25px;
-            }}
-
-            .card {{
-                background: white;
-                padding: 20px;
-                border-radius: 12px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-            }}
-
-            .number {{
-                font-size: 25px;
-                font-weight: bold;
-                margin-top: 8px;
-            }}
-
-            .table-container {{
-                overflow-x: auto;
-                background: white;
-                border-radius: 12px;
-                padding: 10px;
-            }}
-
-            table {{
-                width: 100%;
-                border-collapse: collapse;
-                min-width: 600px;
-            }}
-
-            th, td {{
-                padding: 12px;
-                border-bottom: 1px solid #ddd;
-                text-align: left;
-            }}
-
-            th {{
-                background: #f0f0f0;
-            }}
-        </style>
-    </head>
-
-    <body>
-
-        <h1>🔐 Vicky Admin Panel</h1>
-
-        <div class="cards">
-
-            <div class="card">
-                👥 Total Users
-                <div class="number">
-                    {total_users}
-                </div>
-            </div>
-
-            <div class="card">
-                💰 Total Balance
-                <div class="number">
-                    ₦{total_balance:,}
-                </div>
-            </div>
-
-            <div class="card">
-                🤝 Total Referrals
-                <div class="number">
-                    {total_referrals}
-                </div>
-            </div>
-
-        </div>
-
-        <h2>Users</h2>
-
-        <div class="table-container">
-
-            <table>
-
-                <thead>
-                    <tr>
-                        <th>Telegram ID</th>
-                        <th>Username</th>
-                        <th>Balance</th>
-                        <th>Referrals</th>
-                    </tr>
-                </thead>
-
-                <tbody>
-                    {rows}
-                </tbody>
-
-            </table>
-
-        </div>
-
-        <h2>Withdrawal Requests</h2>
-
-        <div class="table-container">
-
-            <table>
-
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Telegram ID</th>
-                        <th>Username</th>
-                        <th>Amount</th>
-                        <th>Status</th>
-                        <th>Date</th>
-                    </tr>
-                </thead>
-
-                <tbody>
-                    {withdrawal_rows}
-                </tbody>
-
-            </table>
-
-        </div>
-
-    </body>
-    </html>
-    """
 
 @app.route("/")
 def home():
@@ -594,174 +177,153 @@ def run_server():
 
 
 # =========================
-# JOIN CHECK
+# TELEGRAM BOT
 # =========================
 
-async def is_telegram_member(bot, user_id):
-    try:
-        member = await bot.get_chat_member(
-            chat_id=TELEGRAM_CHANNEL,
-            user_id=user_id
-        )
-
-        return member.status in [
-            "member",
-            "administrator",
-            "creator"
-        ]
-
-    except Exception:
-        return False
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     user = update.effective_user
-
     get_user(user.id, user.username)
 
+    # A Telegram referral link looks like /start REFERRER_ID.
     if context.args:
         try:
             referrer_id = int(context.args[0])
-
-            if referrer_id != user.id:
-                set_referrer(user.id, referrer_id)
-
-        except ValueError:
+            set_referrer(user.id, referrer_id)
+        except (ValueError, TypeError):
             pass
 
     await show_join_page(update, context)
 
 
 async def show_join_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     keyboard = [
         [
             InlineKeyboardButton(
                 "📢 Join Telegram Channel",
-                url=TELEGRAM_LINK
+                url=TELEGRAM_LINK,
             )
         ],
         [
             InlineKeyboardButton(
                 "🟢 Follow WhatsApp Channel",
-                url=WHATSAPP_CHANNEL
+                url=WHATSAPP_CHANNEL,
             )
         ],
         [
             InlineKeyboardButton(
                 "✅ I've Joined — Check",
-                callback_data="check"
+                callback_data="check",
             )
-        ]
+        ],
     ]
 
     text = (
         "🔒 *ACCESS LOCKED*\n\n"
-        "To use this bot, please complete the requirements:\n\n"
+        "To use this bot, please complete the requirements below:\n\n"
         "📢 Join our Telegram Channel\n"
         "🟢 Follow our WhatsApp Channel\n\n"
-        "After completing them, tap *I've Joined — Check*."
+        "After completing both, tap *I've Joined — Check*."
     )
 
-    markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
     if update.callback_query:
         await update.callback_query.message.edit_text(
             text,
-            reply_markup=markup,
-            parse_mode="Markdown"
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
         )
     else:
         await update.message.reply_text(
             text,
-            reply_markup=markup,
-            parse_mode="Markdown"
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
         )
 
 
-# =========================
-# CHECK REQUIREMENTS
-# =========================
-
-async def check_membership(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     user_id = query.from_user.id
 
-    joined = await is_telegram_member(
-        context.bot,
-        user_id
-    )
+    try:
+        member = await context.bot.get_chat_member(
+            chat_id=TELEGRAM_CHANNEL,
+            user_id=user_id,
+        )
+        telegram_joined = member.status in [
+            "member",
+            "administrator",
+            "creator",
+        ]
+    except Exception:
+        telegram_joined = False
 
-    if not joined:
+    if telegram_joined:
+        # The referral becomes successful only after the referred user
+        # passes the Telegram join requirement.
+        rewarded = reward_referrer(user_id)
 
         keyboard = [
             [
                 InlineKeyboardButton(
+                    "🚀 Continue",
+                    callback_data="continue",
+                )
+            ]
+        ]
+
+        message = (
+            "✅ *Telegram Channel:* Joined\n"
+            "🟢 *WhatsApp Channel:* Completed\n\n"
+            "🎉 Your requirements are complete!\n\n"
+            "Tap *Continue* to access the bot."
+        )
+
+        if rewarded:
+            message += (
+                f"\n\n🎁 Your referrer has earned "
+                f"*₦{REFERRAL_REWARD}*."
+            )
+
+        await query.message.edit_text(
+            message,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown",
+        )
+
+    else:
+        keyboard = [
+            [
+                InlineKeyboardButton(
                     "📢 Join Telegram Channel",
-                    url=TELEGRAM_LINK
+                    url=TELEGRAM_LINK,
                 )
             ],
             [
                 InlineKeyboardButton(
                     "🟢 Follow WhatsApp Channel",
-                    url=WHATSAPP_CHANNEL
+                    url=WHATSAPP_CHANNEL,
                 )
             ],
             [
                 InlineKeyboardButton(
                     "🔄 Check Again",
-                    callback_data="check"
+                    callback_data="check",
                 )
-            ]
+            ],
         ]
 
         await query.message.edit_text(
-            "❌ *Telegram requirement not completed.*\n\n"
-            "Please join our Telegram channel first, "
-            "then tap *Check Again*.",
+            "❌ You haven't joined the Telegram channel yet.\n\n"
+            "Please join the channel and then tap *Check Again*.",
             reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
+            parse_mode="Markdown",
         )
 
-        return
 
-    reward_referrer(user_id)
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "🚀 Continue",
-                callback_data="continue"
-            )
-        ]
-    ]
-
-    await query.message.edit_text(
-        "🎉 *Welcome!*\n\n"
-        "✅ Telegram Channel: Joined\n"
-        "🟢 WhatsApp Channel: Completed\n\n"
-        "Your requirements are complete!",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
-
-
-# =========================
-# MAIN MENU
-# =========================
-
-async def continue_bot(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def continue_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
@@ -769,111 +331,83 @@ async def continue_bot(
         [
             InlineKeyboardButton(
                 "👥 My Referrals",
-                callback_data="referrals"
+                callback_data="referrals",
             ),
             InlineKeyboardButton(
                 "💰 My Balance",
-                callback_data="balance"
-            )
+                callback_data="balance",
+            ),
         ],
         [
             InlineKeyboardButton(
                 "🔗 My Referral Link",
-                callback_data="link"
+                callback_data="link",
             )
         ],
-        [
-            InlineKeyboardButton(
-                "💸 Withdraw",
-                callback_data="withdraw"
-            )
-        ]
     ]
 
     await query.message.edit_text(
-        "🎉 *Vicky Updates*\n\n"
-        "Welcome! Choose an option below:",
+        "🎉 *Welcome!*\n\n"
+        "Choose an option below:",
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
+        parse_mode="Markdown",
     )
 
 
-# =========================
-# REFERRALS
-# =========================
-
-async def referrals(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     balance, count = get_stats(query.from_user.id)
 
     await query.message.edit_text(
-        f"👥 *My Referrals*\n\n"
+        "👥 *My Referrals*\n\n"
         f"Successful referrals: *{count}*\n"
         f"Earned: *₦{count * REFERRAL_REWARD:,}*\n"
         f"Current balance: *₦{balance:,}*",
-        reply_markup=InlineKeyboardMarkup([
+        reply_markup=InlineKeyboardMarkup(
             [
-                InlineKeyboardButton(
-                    "🔙 Back",
-                    callback_data="continue"
-                )
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="continue",
+                    )
+                ]
             ]
-        ]),
-        parse_mode="Markdown"
+        ),
+        parse_mode="Markdown",
     )
 
 
-# =========================
-# BALANCE
-# =========================
-
-async def balance(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     bal, count = get_stats(query.from_user.id)
 
     await query.message.edit_text(
-        f"💰 *Your Balance*\n\n"
+        "💰 *Your Balance*\n\n"
         f"Balance: *₦{bal:,}*\n"
-        f"Referrals: *{count}*\n\n"
-        f"Minimum withdrawal: *₦{MINIMUM_WITHDRAWAL:,}*",
-        reply_markup=InlineKeyboardMarkup([
+        f"Referrals: *{count}*",
+        reply_markup=InlineKeyboardMarkup(
             [
-                InlineKeyboardButton(
-                    "🔙 Back",
-                    callback_data="continue"
-                )
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="continue",
+                    )
+                ]
             ]
-        ]),
-        parse_mode="Markdown"
+        ),
+        parse_mode="Markdown",
     )
 
 
-# =========================
-# REFERRAL LINK
-# =========================
-
-async def referral_link(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def referral_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     me = await context.bot.get_me()
-
     link = f"https://t.me/{me.username}?start={query.from_user.id}"
 
     await query.message.edit_text(
@@ -882,170 +416,73 @@ async def referral_link(
         f"`{link}`\n\n"
         f"💰 You earn *₦{REFERRAL_REWARD}* "
         "for every successful referral.",
-        reply_markup=InlineKeyboardMarkup([
+        reply_markup=InlineKeyboardMarkup(
             [
-                InlineKeyboardButton(
-                    "🔙 Back",
-                    callback_data="continue"
-                )
-            ]
-        ]),
-        parse_mode="Markdown"
-    )
-
-
-# =========================
-# WITHDRAW
-# =========================
-
-async def withdraw(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    query = update.callback_query
-    await query.answer()
-
-    bal, count = get_stats(query.from_user.id)
-
-    if bal < MINIMUM_WITHDRAWAL:
-
-        remaining = MINIMUM_WITHDRAWAL - bal
-
-        await query.message.edit_text(
-            "💸 *Withdrawal*\n\n"
-            f"Your balance: *₦{bal:,}*\n"
-            f"Minimum withdrawal: *₦{MINIMUM_WITHDRAWAL:,}*\n\n"
-            f"You need *₦{remaining:,}* more "
-            "before you can withdraw.",
-            reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
                         "🔙 Back",
-                        callback_data="continue"
+                        callback_data="continue",
                     )
                 ]
-            ]),
-            parse_mode="Markdown"
-        )
-
-        return
-
-    # Create withdrawal request
-    with db_lock:
-        conn = get_connection()
-
-        try:
-            with conn.cursor() as cursor:
-
-                cursor.execute("""
-                    INSERT INTO withdrawals
-                    (user_id, username, amount)
-                    VALUES (%s, %s, %s)
-                """, (
-                    query.from_user.id,
-                    query.from_user.username,
-                    bal
-                ))
-
-                conn.commit()
-
-        finally:
-            conn.close()
-
-    await query.message.edit_text(
-        "💸 *Withdrawal Request Submitted!*\n\n"
-        f"Amount: *₦{bal:,}*\n\n"
-        "Your withdrawal request has been sent "
-        "to the administrator for processing.",
-        reply_markup=InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(
-                    "🔙 Back",
-                    callback_data="continue"
-                )
             ]
-        ]),
-        parse_mode="Markdown"
+        ),
+        parse_mode="Markdown",
     )
+
 
 # =========================
 # MAIN
 # =========================
 
 def main():
-
     if not BOT_TOKEN:
-        raise ValueError(
-            "BOT_TOKEN environment variable is missing."
-        )
+        raise ValueError("BOT_TOKEN environment variable is missing.")
 
     if not DATABASE_URL:
-        raise ValueError(
-            "DATABASE_URL environment variable is missing."
-        )
+        raise ValueError("DATABASE_URL environment variable is missing.")
 
     init_database()
 
     threading.Thread(
         target=run_server,
-        daemon=True
+        daemon=True,
     ).start()
 
-    application = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .build()
-    )
+    application = Application.builder().token(BOT_TOKEN).build()
 
-    application.add_handler(
-        CommandHandler("start", start)
-    )
-
+    application.add_handler(CommandHandler("start", start))
     application.add_handler(
         CallbackQueryHandler(
             check_membership,
-            pattern="^check$"
+            pattern="^check$",
         )
     )
-
     application.add_handler(
         CallbackQueryHandler(
             continue_bot,
-            pattern="^continue$"
+            pattern="^continue$",
         )
     )
-
     application.add_handler(
         CallbackQueryHandler(
             referrals,
-            pattern="^referrals$"
+            pattern="^referrals$",
         )
     )
-
     application.add_handler(
         CallbackQueryHandler(
             balance,
-            pattern="^balance$"
+            pattern="^balance$",
         )
     )
-
     application.add_handler(
         CallbackQueryHandler(
             referral_link,
-            pattern="^link$"
-        )
-    )
-
-    application.add_handler(
-        CallbackQueryHandler(
-            withdraw,
-            pattern="^withdraw$"
+            pattern="^link$",
         )
     )
 
     print("Vicky Join Bot started!")
-
     application.run_polling()
 
 
