@@ -292,35 +292,172 @@ def admin_panel():
                 """)
 
                 users = cursor.fetchall()
-                cursor.execute("""
-    SELECT id, user_id, username, amount, status, created_at
-    FROM withdrawals
-    ORDER BY id DESC
-    LIMIT 100
-""")
 
-withdrawals = cursor.fetchall()
+                cursor.execute("""
+                    SELECT id, user_id, username, amount, status, created_at
+                    FROM withdrawals
+                    ORDER BY id DESC
+                    LIMIT 100
+                """)
+
+                withdrawals = cursor.fetchall()
 
         finally:
             conn.close()
 
     rows = ""
-withdrawal_rows = ""
+    withdrawal_rows = ""
 
-for wid, user_id, username, amount, status, created_at in withdrawals:
+    for wid, user_id, username, amount, status, created_at in withdrawals:
 
-    username = username or "No username"
+        username = username or "No username"
 
-    withdrawal_rows += f"""
-    <tr>
-        <td>{wid}</td>
-        <td>{user_id}</td>
-        <td>{username}</td>
-        <td>₦{amount:,}</td>
-        <td>{status}</td>
-        <td>{created_at}</td>
-    </tr>
-    """
+        withdrawal_rows += f"""
+        <tr>
+            <td>{wid}</td>
+            <td>{user_id}</td>
+            <td>{username}</td>
+            <td>₦{amount:,}</td>
+            <td>{status}</td>
+            <td>{created_at}</td>
+        </tr>
+        """
+
+    for user_id, username, balance, referrals in users:
+
+        username = username or "No username"
+
+        rows += f"""
+        <tr>
+            <td>{user_id}</td>
+            <td>{username}</td>
+            <td>₦{balance:,}</td>
+            <td>{referrals}</td>
+        </tr>
+        """
+
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Vicky Admin Panel</title>
+
+        <meta name="viewport"
+              content="width=device-width, initial-scale=1">
+
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                margin: 0;
+                padding: 20px;
+                background: #f5f5f5;
+            }}
+
+            h1 {{
+                margin-bottom: 20px;
+            }}
+
+            .cards {{
+                display: grid;
+                grid-template-columns:
+                    repeat(auto-fit, minmax(180px, 1fr));
+                gap: 15px;
+                margin-bottom: 25px;
+            }}
+
+            .card {{
+                background: white;
+                padding: 20px;
+                border-radius: 12px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            }}
+
+            .number {{
+                font-size: 25px;
+                font-weight: bold;
+                margin-top: 8px;
+            }}
+
+            .table-container {{
+                overflow-x: auto;
+                background: white;
+                border-radius: 12px;
+                padding: 10px;
+            }}
+
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                min-width: 600px;
+@app.route("/admin")
+def admin_panel():
+
+    if not check_admin_auth():
+        return Response(
+            "Admin login required.",
+            401,
+            {"WWW-Authenticate": 'Basic realm="Vicky Admin Panel"'}
+        )
+
+    with db_lock:
+        conn = get_connection()
+
+        try:
+            with conn.cursor() as cursor:
+
+                cursor.execute(
+                    "SELECT COUNT(*) FROM users"
+                )
+                total_users = cursor.fetchone()[0]
+
+                cursor.execute(
+                    "SELECT COALESCE(SUM(balance), 0) FROM users"
+                )
+                total_balance = cursor.fetchone()[0]
+
+                cursor.execute(
+                    "SELECT COALESCE(SUM(referrals), 0) FROM users"
+                )
+                total_referrals = cursor.fetchone()[0]
+
+                cursor.execute("""
+                    SELECT user_id, username, balance, referrals
+                    FROM users
+                    ORDER BY user_id DESC
+                    LIMIT 100
+                """)
+
+                users = cursor.fetchall()
+
+                cursor.execute("""
+                    SELECT id, user_id, username, amount, status, created_at
+                    FROM withdrawals
+                    ORDER BY id DESC
+                    LIMIT 100
+                """)
+
+                withdrawals = cursor.fetchall()
+
+        finally:
+            conn.close()
+
+    rows = ""
+    withdrawal_rows = ""
+
+    for wid, user_id, username, amount, status, created_at in withdrawals:
+
+        username = username or "No username"
+
+        withdrawal_rows += f"""
+        <tr>
+            <td>{wid}</td>
+            <td>{user_id}</td>
+            <td>{username}</td>
+            <td>₦{amount:,}</td>
+            <td>{status}</td>
+            <td>{created_at}</td>
+        </tr>
+        """
 
     for user_id, username, balance, referrals in users:
 
@@ -452,34 +589,34 @@ for wid, user_id, username, amount, status, created_at in withdrawals:
 
             </table>
 
-</div>
+        </div>
 
-<h2>Withdrawal Requests</h2>
+        <h2>Withdrawal Requests</h2>
 
-<div class="table-container">
+        <div class="table-container">
 
-    <table>
+            <table>
 
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Telegram ID</th>
-                <th>Username</th>
-                <th>Amount</th>
-                <th>Status</th>
-                <th>Date</th>
-            </tr>
-        </thead>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Telegram ID</th>
+                        <th>Username</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
 
-        <tbody>
-            {withdrawal_rows}
-        </tbody>
+                <tbody>
+                    {withdrawal_rows}
+                </tbody>
 
-    </table>
+            </table>
 
-</div>
+        </div>
 
-</body>
+    </body>
     </html>
     """
 
