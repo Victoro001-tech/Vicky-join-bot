@@ -54,7 +54,16 @@ def init_database():
                 """)
 
                 conn.commit()
-
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS withdrawals (
+                        id SERIAL PRIMARY KEY,
+                        user_id BIGINT NOT NULL,
+                        username TEXT,
+                        amount INTEGER NOT NULL,
+                        status TEXT DEFAULT 'pending',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
         finally:
             conn.close()
 
@@ -773,11 +782,33 @@ async def withdraw(
 
         return
 
+    # Create withdrawal request
+    with db_lock:
+        conn = get_connection()
+
+        try:
+            with conn.cursor() as cursor:
+
+                cursor.execute("""
+                    INSERT INTO withdrawals
+                    (user_id, username, amount)
+                    VALUES (%s, %s, %s)
+                """, (
+                    query.from_user.id,
+                    query.from_user.username,
+                    bal
+                ))
+
+                conn.commit()
+
+        finally:
+            conn.close()
+
     await query.message.edit_text(
-        "💸 *Withdrawal Available*\n\n"
-        f"Your balance: *₦{bal:,}*\n\n"
-        "Please contact the administrator to request "
-        "your withdrawal.",
+        "💸 *Withdrawal Request Submitted!*\n\n"
+        f"Amount: *₦{bal:,}*\n\n"
+        "Your withdrawal request has been sent "
+        "to the administrator for processing.",
         reply_markup=InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(
@@ -788,7 +819,6 @@ async def withdraw(
         ]),
         parse_mode="Markdown"
     )
-
 
 # =========================
 # MAIN
