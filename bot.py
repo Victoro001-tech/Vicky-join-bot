@@ -419,9 +419,23 @@ def admin_panel():
                     "SELECT COALESCE(SUM(referrals), 0) FROM users"
                 )
                 total_referrals = cursor.fetchone()[0]
-
                 cursor.execute("""
                     SELECT user_id, username, balance, referrals
+                    FROM users
+                    ORDER BY user_id DESC
+                    LIMIT 100
+                """)
+
+                users = cursor.fetchall()
+
+                cursor.execute("""
+                    SELECT id, user_id, username, amount, status, created_at
+                    FROM withdrawals
+                    ORDER BY id DESC
+                    LIMIT 100
+                """)
+
+                withdrawals = cursor.fetchall()
                     FROM users
                     ORDER BY user_id DESC
                     LIMIT 100
