@@ -809,7 +809,7 @@ async def withdrawal(
         parse_mode="Markdown",
     )
 
-    context.user_data[
+    context.user_data["waiting_for_bank_details"] = True
         "waiting_for_b            with conn.cursor() as cursor:
                 cursor.execute(
                     """ SELECT referred_by, referral_rewarded FROM users WHERE user_id = %s FOR UPDATE """,
