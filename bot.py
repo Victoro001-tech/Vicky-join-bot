@@ -17,10 +17,9 @@ BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Get from @BotFather on Telegram
 WHATSAPP_LINK = "https://whatsapp.com/channel/0029VbDyRS18F2p6910NlS1j"
 TELEGRAM_GROUP_LINK = "https://t.me/Vickyupdatemayor"
 
-# Channel IDs for API checks & Admin Notifications
-# Note: For public channel @Vickyupdatemayor, the handle can be checked directly.
+# Verification & Admin Settings
 TELEGRAM_GROUP_USERNAME = "@Vickyupdatemayor"
-ADMIN_CHANNEL_ID = -1009876543210  # Replace with numeric ID of your Admin Channel/Group
+ADMIN_CHANNEL_ID = -1009876543210  # Replace with numeric ID of your Admin Channel/Group (e.g. -100xxxxxxxxxx)
 
 MIN_WITHDRAWAL = 600
 REFERRAL_BONUS = 100
@@ -31,10 +30,10 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-# In-memory database
+# In-memory storage
 users_db = {} 
 
-# Conversation States
+# States for withdrawal conversation flow
 BANK_NAME, ACCOUNT_NUMBER, ACCOUNT_NAME, AMOUNT = range(4)
 
 
@@ -127,7 +126,7 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["💸 Withdraw"]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text(" Welcome to the main menu! Select an option below:", reply_markup=reply_markup)
+    await update.message.reply_text("Welcome to the main menu! Select an option below:", reply_markup=reply_markup)
 
 
 async def send_main_menu_direct(chat_id, context):
@@ -136,7 +135,7 @@ async def send_main_menu_direct(chat_id, context):
         ["💸 Withdraw"]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await context.bot.send_message(chat_id=chat_id, text=" Welcome to the main menu! Select an option below:", reply_markup=reply_markup)
+    await context.bot.send_message(chat_id=chat_id, text="Welcome to the main menu! Select an option below:", reply_markup=reply_markup)
 
 
 # --- MAIN MENU HANDLERS ---
@@ -311,9 +310,10 @@ async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # Supports both current and previous button variations
     withdraw_handler = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex("^💸 Withdraw$"), start_withdrawal),
+            MessageHandler(filters.Regex("^(💸 Withdraw|💸Withdraw|Withdraw)$"), start_withdrawal),
             CommandHandler("withdraw", start_withdrawal)
         ],
         states={
@@ -329,8 +329,9 @@ def main():
     app.add_handler(CallbackQueryHandler(check_joined_callback, pattern="^check_joined$"))
     app.add_handler(CallbackQueryHandler(admin_decision_callback, pattern="^(app|rej)_"))
 
-    app.add_handler(MessageHandler(filters.Regex("^💰 Balance / Wallet$"), show_balance))
-    app.add_handler(MessageHandler(filters.Regex("^👥 Refer & Earn$"), show_referral))
+    # Updated Menu Handlers matching new button text and fallback patterns
+    app.add_handler(MessageHandler(filters.Regex("^(💰 Balance / Wallet|💰 Balance|Balance)$"), show_balance))
+    app.add_handler(MessageHandler(filters.Regex("^(👥 Refer & Earn|👥 Referrals|Invite Friends)$"), show_referral))
     app.add_handler(withdraw_handler)
 
     logging.info("Bot starting...")
@@ -339,4 +340,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+    
