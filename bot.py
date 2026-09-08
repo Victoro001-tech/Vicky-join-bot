@@ -272,24 +272,24 @@ def admin(user_id):
 
 def join_markup():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("ðŸ“¢ Join Telegram Channel", url=TELEGRAM_LINK)],
-        [InlineKeyboardButton("ðŸ“± Join WhatsApp Channel", url=WHATSAPP_LINK)],
-        [InlineKeyboardButton("âœ… I've Joined", callback_data="check_join")],
+        [InlineKeyboardButton("[CHANNEL] Join Telegram Channel", url=TELEGRAM_LINK)],
+        [InlineKeyboardButton("[WHATSAPP] Join WhatsApp Channel", url=WHATSAPP_LINK)],
+        [InlineKeyboardButton("[OK] I've Joined", callback_data="check_join")],
     ])
 
 
 def menu_markup():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("ðŸ‘¥ My Referrals", callback_data="referrals"), InlineKeyboardButton("ðŸ’° Balance", callback_data="balance")],
-        [InlineKeyboardButton("ðŸ”— Referral Link", callback_data="ref_link"), InlineKeyboardButton("ðŸ’¸ Withdraw", callback_data="withdraw")],
+        [InlineKeyboardButton("[REFERRALS] My Referrals", callback_data="referrals"), InlineKeyboardButton("[BALANCE] Balance", callback_data="balance")],
+        [InlineKeyboardButton("[LINK] Referral Link", callback_data="ref_link"), InlineKeyboardButton("[WITHDRAW] Withdraw", callback_data="withdraw")],
     ])
 
 
 def admin_markup():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("ðŸ“Š Stats", callback_data="a_stats"), InlineKeyboardButton("ðŸ‘¥ Users", callback_data="a_users")],
-        [InlineKeyboardButton("ðŸ’¸ Pending Withdrawals", callback_data="a_wds")],
-        [InlineKeyboardButton("ðŸ”„ Refresh", callback_data="a_home")],
+        [InlineKeyboardButton("[STATS] Stats", callback_data="a_stats"), InlineKeyboardButton("[REFERRALS] Users", callback_data="a_users")],
+        [InlineKeyboardButton("[WITHDRAW] Pending Withdrawals", callback_data="a_wds")],
+        [InlineKeyboardButton("[REFRESH] Refresh", callback_data="a_home")],
     ])
 
 
@@ -307,7 +307,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     await update.message.reply_text(
-        "ðŸŽ‰ *Welcome to Freecash_bot!\n\nJoin both channels, then press* âœ… *I've Joined*.\n\nYou earn â‚¦100 for every successful referral.*",
+        "[SUCCESS] *Welcome to Freecash_bot!\n\nJoin both channels, then press* [OK] *I've Joined*.\n\nYou earn ₦100 for every successful referral.*",
         reply_markup=join_markup(),
     )
 
@@ -325,22 +325,22 @@ async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not allowed:
         await query.message.edit_text(
-            "âŒ *Telegram membership was not detected yet.*\n\nPlease join the Telegram channel first, then press the button again.",
+            "[X] *Telegram membership was not detected yet.*\n\nPlease join the Telegram channel first, then press the button again.",
             reply_markup=join_markup(),
             )
         return
 
     rewarded = reward_referrer(user_id)
-    text = "âœ… *Membership verified!\n\nWelcome to Freecash_bot.*"
+    text = "[OK] *Membership verified!\n\nWelcome to Freecash_bot.*"
     if rewarded:
-        text += "\n\nðŸŽ Your referrer has received â‚¦100."
+        text += "\n\n[REWARD] Your referrer has received ₦100."
     await query.message.edit_text(text, reply_markup=menu_markup())
 
 
 async def continue_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.message.edit_text("ðŸ  *Main Menu*", reply_markup=menu_markup())
+    await query.message.edit_text("[HOME] *Main Menu*", reply_markup=menu_markup())
 
 
 async def referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -348,8 +348,8 @@ async def referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     bal, refs = user_stats(query.from_user.id)
     await query.message.edit_text(
-        f"ðŸ‘¥ *My Referrals*\n\nSuccessful referrals: *{refs}*\nEarned: *â‚¦{refs * REFERRAL_REWARD:,}*\nBalance: *â‚¦{bal:,}*",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("ðŸ”™ Back", callback_data="menu")]]),
+        f"[REFERRALS] *My Referrals*\n\nSuccessful referrals: *{refs}*\nEarned: *₦{refs * REFERRAL_REWARD:,}*\nBalance: *₦{bal:,}*",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("[BACK] Back", callback_data="menu")]]),
     )
 
 
@@ -358,8 +358,8 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     bal, refs = user_stats(query.from_user.id)
     await query.message.edit_text(
-        f"ðŸ’° *Balance*\n\nAvailable: *â‚¦{bal:,}*\nReferrals: *{refs}*\nMinimum withdrawal: *â‚¦{MIN_WITHDRAWAL:,}*",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("ðŸ”™ Back", callback_data="menu")]]),
+        f"[BALANCE] *Balance*\n\nAvailable: *₦{bal:,}*\nReferrals: *{refs}*\nMinimum withdrawal: *₦{MIN_WITHDRAWAL:,}*",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("[BACK] Back", callback_data="menu")]]),
     )
 
 
@@ -369,8 +369,8 @@ async def ref_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     me = await context.bot.get_me()
     link = f"https://t.me/{me.username}?start={query.from_user.id}"
     await query.message.edit_text(
-        f"ðŸ”— *Your Referral Link*\n\n`{link}`\n\nEarn *â‚¦{REFERRAL_REWARD}* for each successful referral.",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("ðŸ”™ Back", callback_data="menu")]]),
+        f"[LINK] *Your Referral Link*\n\n`{link}`\n\nEarn *₦{REFERRAL_REWARD}* for each successful referral.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("[BACK] Back", callback_data="menu")]]),
     )
 
 
@@ -380,14 +380,14 @@ async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bal, _ = user_stats(query.from_user.id)
     if bal < MIN_WITHDRAWAL:
         await query.message.edit_text(
-            f"ðŸ’¸ *Withdrawal*\n\nBalance: *â‚¦{bal:,}*\nMinimum: *â‚¦{MIN_WITHDRAWAL:,}*\n\nYou need *â‚¦{MIN_WITHDRAWAL-bal:,}* more.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("ðŸ”™ Back", callback_data="menu")]]),
+            f"[WITHDRAW] *Withdrawal*\n\nBalance: *₦{bal:,}*\nMinimum: *₦{MIN_WITHDRAWAL:,}*\n\nYou need *₦{MIN_WITHDRAWAL-bal:,}* more.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("[BACK] Back", callback_data="menu")]]),
             )
         return
     context.user_data["withdraw_step"] = "details"
     await query.message.edit_text(
-        "ðŸ’¸ *Withdrawal Request*\n\nSend your bank details in exactly this format:\n\n`Bank Name | Account Number | Account Name`\n\nExample:\n`GTBank | 0123456789 | John Doe`",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("âŒ Cancel", callback_data="menu")]]),
+        "[WITHDRAW] *Withdrawal Request*\n\nSend your bank details in exactly this format:\n\n`Bank Name | Account Number | Account Name`\n\nExample:\n`GTBank | 0123456789 | John Doe`",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("[X] Cancel", callback_data="menu")]]),
     )
 
 
@@ -397,35 +397,35 @@ async def bank_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw = (update.message.text or "").strip()
     parts = [p.strip() for p in raw.split("|")]
     if len(parts) != 3 or not all(parts):
-        await update.message.reply_text("âŒ Invalid format. Use:\n`Bank Name | Account Number | Account Name`")
+        await update.message.reply_text("[X] Invalid format. Use:\n`Bank Name | Account Number | Account Name`")
         return
     bank, account, name = parts
     if not account.isdigit() or not (8 <= len(account) <= 12):
-        await update.message.reply_text("âŒ Account number should contain 8â€“12 digits.")
+        await update.message.reply_text("[X] Account number should contain 8–12 digits.")
         return
 
     bal, _ = user_stats(update.effective_user.id)
     if bal < MIN_WITHDRAWAL:
         context.user_data.clear()
-        await update.message.reply_text("âŒ Your balance is now below the minimum withdrawal amount.")
+        await update.message.reply_text("[X] Your balance is now below the minimum withdrawal amount.")
         return
 
     wid = create_withdrawal(update.effective_user.id, update.effective_user.username, bal, bank, account, name)
     context.user_data.clear()
     if not wid:
-        await update.message.reply_text("âŒ Withdrawal could not be created. Please try again.")
+        await update.message.reply_text("[X] Withdrawal could not be created. Please try again.")
         return
 
     await update.message.reply_text(
-        f"âœ… *Withdrawal submitted!*\n\nRequest: *#{wid}*\nAmount: *â‚¦{bal:,}*\nBank: *{bank}*\nAccount: `{account}`\nName: *{name}*\n\nYour request is pending admin approval.",
+        f"[OK] *Withdrawal submitted!*\n\nRequest: *#{wid}*\nAmount: *₦{bal:,}*\nBank: *{bank}*\nAccount: `{account}`\nName: *{name}*\n\nYour request is pending admin approval.",
         reply_markup=menu_markup(),
     )
     try:
         await context.bot.send_message(
             ADMIN_ID,
-            f"ðŸ’¸ *NEW WITHDRAWAL #{wid}*\n\nUser: `{update.effective_user.id}`\nAmount: *â‚¦{bal:,}*\nBank: *{bank}*\nAccount: `{account}`\nName: *{name}*",
+            f"[WITHDRAW] *NEW WITHDRAWAL #{wid}*\n\nUser: `{update.effective_user.id}`\nAmount: *₦{bal:,}*\nBank: *{bank}*\nAccount: `{account}`\nName: *{name}*",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("âœ… Approve", callback_data=f"approve:{wid}"), InlineKeyboardButton("âŒ Reject + Refund", callback_data=f"reject:{wid}")]
+                [InlineKeyboardButton("[OK] Approve", callback_data=f"approve:{wid}"), InlineKeyboardButton("[X] Reject + Refund", callback_data=f"reject:{wid}")]
             ]),
             )
     except Exception as exc:
@@ -434,7 +434,7 @@ async def bank_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not admin(update.effective_user.id):
-        await update.message.reply_text("â›” Admin only.")
+        await update.message.reply_text("[ERROR] Admin only.")
         return
     await show_admin(update, context)
 
@@ -442,11 +442,11 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users, total_balance, referrals_count, pending = admin_stats()
     text = (
-        "ðŸ›  *Admin Panel*\n\n"
-        f"ðŸ‘¥ Users: *{users:,}*\n"
-        f"ðŸ’° Total balances: *â‚¦{total_balance:,}*\n"
-        f"ðŸ”— Referrals: *{referrals_count:,}*\n"
-        f"ðŸ’¸ Pending withdrawals: *{pending:,}*"
+        "[ADMIN] *Admin Panel*\n\n"
+        f"[REFERRALS] Users: *{users:,}*\n"
+        f"[BALANCE] Total balances: *₦{total_balance:,}*\n"
+        f"[LINK] Referrals: *{referrals_count:,}*\n"
+        f"[WITHDRAW] Pending withdrawals: *{pending:,}*"
     )
     markup = admin_markup()
     if update.callback_query:
@@ -470,23 +470,23 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if data == "a_users":
         rows = latest_users()
-        lines = ["ðŸ‘¥ *Latest Users*", ""]
+        lines = ["[REFERRALS] *Latest Users*", ""]
         for uid, username, bal, refs in rows:
-            lines.append(f"`{uid}` {('@'+username) if username else 'No username'}\nâ‚¦{bal:,} | {refs} referrals")
-        await query.message.edit_text("\n".join(lines), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("ðŸ”™ Admin", callback_data="a_home")]]))
+            lines.append(f"`{uid}` {('@'+username) if username else 'No username'}\n₦{bal:,} | {refs} referrals")
+        await query.message.edit_text("\n".join(lines), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("[BACK] Admin", callback_data="a_home")]]))
         return
     if data == "a_wds":
         rows = pending_withdrawals()
         if not rows:
-            text = "ðŸ’¸ *Pending Withdrawals*\n\nNone."
-            markup = InlineKeyboardMarkup([[InlineKeyboardButton("ðŸ”™ Admin", callback_data="a_home")]])
+            text = "[WITHDRAW] *Pending Withdrawals*\n\nNone."
+            markup = InlineKeyboardMarkup([[InlineKeyboardButton("[BACK] Admin", callback_data="a_home")]])
         else:
             buttons = []
             for row in rows:
                 wid, uid, username, amount, bank, account, name, status, created = row
-                buttons.append([InlineKeyboardButton(f"#{wid} â€” â‚¦{amount:,}", callback_data=f"view:{wid}")])
-            buttons.append([InlineKeyboardButton("ðŸ”™ Admin", callback_data="a_home")])
-            text = "ðŸ’¸ *Pending Withdrawals*\n\nSelect a request:"
+                buttons.append([InlineKeyboardButton(f"#{wid} — ₦{amount:,}", callback_data=f"view:{wid}")])
+            buttons.append([InlineKeyboardButton("[BACK] Admin", callback_data="a_home")])
+            text = "[WITHDRAW] *Pending Withdrawals*\n\nSelect a request:"
             markup = InlineKeyboardMarkup(buttons)
         await query.message.edit_text(text, reply_markup=markup)
         return
@@ -494,83 +494,4 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         wid = int(data.split(":", 1)[1])
         row = get_withdrawal(wid)
         if not row:
-            await query.answer("Not found", show_alert=True)
-            return
-        wid, uid, username, amount, bank, account, name, status, created = row
-        text = (f"ðŸ’¸ *Withdrawal #{wid}*\n\nUser: `{uid}`\nAmount: *â‚¦{amount:,}*\nBank: *{bank}*\nAccount: `{account}`\nName: *{name}*\nStatus: *{status}*")
-        buttons = []
-        if status == "pending":
-            buttons.append([InlineKeyboardButton("âœ… Approve", callback_data=f"approve:{wid}"), InlineKeyboardButton("âŒ Reject + Refund", callback_data=f"reject:{wid}")])
-        buttons.append([InlineKeyboardButton("ðŸ”™ Pending", callback_data="a_wds")])
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-        return
-    if data.startswith("approve:"):
-        wid = int(data.split(":", 1)[1])
-        row = approve_withdrawal(wid)
-        if not row:
-            await query.answer("Already processed or not found", show_alert=True)
-            return
-        uid, amount = row
-        await query.message.edit_text(f"âœ… *Withdrawal #{wid} approved.*\n\nAmount: â‚¦{amount:,}\nUser: `{uid}`", reply_markup=admin_markup())
-        try:
-            await context.bot.send_message(uid, f"âœ… Your withdrawal *#{wid}* of *â‚¦{amount:,}* has been approved.")
-        except Exception as exc:
-            print("User approval notification error:", exc)
-        return
-    if data.startswith("reject:"):
-        wid = int(data.split(":", 1)[1])
-        row = reject_withdrawal(wid)
-        if not row:
-            await query.answer("Already processed or not found", show_alert=True)
-            return
-        uid, amount = row
-        await query.message.edit_text(f"âŒ *Withdrawal #{wid} rejected and refunded.*\n\nRefund: â‚¦{amount:,}\nUser: `{uid}`", reply_markup=admin_markup())
-        try:
-            await context.bot.send_message(uid, f"âŒ Your withdrawal *#{wid}* was rejected. â‚¦{amount:,} has been refunded to your balance.")
-        except Exception as exc:
-            print("User refund notification error:", exc)
-
-
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Use /start to open the bot. Use /admin for the admin panel.")
-
-
-async def post_init(application: Application):
-    await application.bot.set_my_commands([
-        BotCommand("start", "Start the bot"),
-        BotCommand("admin", "Admin panel"),
-        BotCommand("help", "Help"),
-    ])
-
-
-# =========================
-# STARTUP
-# =========================
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is missing")
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL is missing")
-
-    init_db()
-    threading.Thread(target=run_web, daemon=True).start()
-
-    application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("admin", admin_cmd))
-    application.add_handler(CommandHandler("help", help_cmd))
-    application.add_handler(CallbackQueryHandler(check_join, pattern=r"^check_join$"))
-    application.add_handler(CallbackQueryHandler(referrals, pattern=r"^referrals$"))
-    application.add_handler(CallbackQueryHandler(balance, pattern=r"^balance$"))
-    application.add_handler(CallbackQueryHandler(ref_link, pattern=r"^ref_link$"))
-    application.add_handler(CallbackQueryHandler(withdraw, pattern=r"^withdraw$"))
-    application.add_handler(CallbackQueryHandler(continue_menu, pattern=r"^menu$"))
-    application.add_handler(CallbackQueryHandler(admin_callback, pattern=r"^(a_home|a_stats|a_users|a_wds|view:\d+|approve:\d+|reject:\d+)$"))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bank_details))
-
-    print("Bot starting...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
-if __name__ == "__main__":
-    main()
+            await que
