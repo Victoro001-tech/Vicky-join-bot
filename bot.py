@@ -3,7 +3,12 @@ import threading
 
 import psycopg2
 from flask import Flask
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    BotCommand,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -11,58 +16,151 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# =========================
+
+# ============================================================
 # SETTINGS
-# =========================
+# ============================================================
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+ADMIN_ID = 6225743234
+
 TELEGRAM_CHANNEL = "@Vickyupdatemayor"
 TELEGRAM_LINK = "https://t.me/Vickyupdatemayor"
-WHATSAPP_CHANNEL = "https://whatsapp.com/channel/0029VbDyRS18F2p6910NlS1j"
+
+WHATSAPP_CHANNEL = (
+    "https://whatsapp.com/channel/0029VbDyRS18F2p6910NlS1j"
+)
 
 REFERRAL_REWARD = 100
+MIN_WITHDRAWAL = 500
 
 db_lock = threading.Lock()
 
-# =========================
+
+# ============================================================
 # DATABASE
-# =========================
+# ============================================================
 
 def get_connection():
     if not DATABASE_URL:
-        raise ValueError("DATABASE_URL environment variable is missing.")
+        raise ValueError(
+            "DATABASE_URL environment variable is missing."
+        )
+
     return psycopg2.connect(DATABASE_URL)
 
 
 def init_database():
     with db_lock:
         conn = get_connection()
+
         try:
             with conn.cursor() as cursor:
+
+                # Create users table if it does not exist.
                 cursor.execute(
-                    """ CREATE TABLE IF NOT EXISTS users ( user_id BIGINT PRIMARY KEY, username TEXT, balance BIGINT NOT NULL DEFAULT 0, referrals INTEGER NOT NULL DEFAULT 0, referred_by BIGINT, referral_rewarded BOOLEAN NOT NULL DEFAULT FALSE ) """
+                    """
+                    CREATE TABLE IF NOT EXISTS users (
+                        user_id BIGINT PRIMARY KEY,
+                        username TEXT,
+                        balance BIGINT NOT NULL DEFAULT 0,
+                        referrals INTEGER NOT NULL DEFAULT 0,
+                        referred_by BIGINT,
+                        referral_rewarded INTEGER NOT NULL DEFAULT 0
+                    )
+                    """
                 )
 
-                # Safely add columns if an older users table already exists.
+                # Make sure old databases have all columns.
                 cursor.execute(
-                    """ ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT """
+                    """
+                    ALTER TABLE users
+                    ADD COLUMN IF NOT EXISTS username TEXT
+                    """
                 )
+
                 cursor.execute(
-                    """ ALTER TABLE users ADD COLUMN IF NOT EXISTS balance BIGINT NOT NULL DEFAULT 0 """
+                    """
+                    ALTER TABLE users
+                    ADD COLUMN IF NOT EXISTS balance
+                    BIGINT NOT NULL DEFAULT 0
+                    """
                 )
+
                 cursor.execute(
-                    """ ALTER TABLE users ADD COLUMN IF NOT EXISTS referrals INTEGER NOT NULL DEFAULT 0 """
+                    """
+                    ALTER TABLE users
+                    ADD COLUMN IF NOT EXISTS referrals
+                    INTEGER NOT NULL DEFAULT 0
+                    """
                 )
+
                 cursor.execute(
-                    """ ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT """
+                    """
+                    ALTER TABLE users
+                    ADD COLUMN IF NOT EXISTS referred_by BIGINT
+                    """
                 )
+
+                # IMPORTANT:
+                # Older version used BOOLEAN here.
+                # Convert it safely to INTEGER while preserving
+                # existing TRUE/FALSE referral status.
                 cursor.execute(
-                    """ ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_rewarded BOOLEAN NOT NULL DEFAULT FALSE """
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_name = 'users'
+                            AND column_name = 'referral_rewarded'
+                            AND data_type = 'boolean'
+                        ) THEN
+                            ALTER TABLE users
+                            ALTER COLUMN referral_rewarded
+                            TYPE INTEGER
+                            USING CASE
+                                WHEN referral_rewarded
+                                THEN 1
+                                ELSE 0
+                            END;
+                        END IF;
+                    END
+                    $$
+                    """
+                )
+
+                cursor.execute(
+                    """
+                    ALTER TABLE users
+                    ADD COLUMN IF NOT EXISTS referral_rewarded
+                    INTEGER NOT NULL DEFAULT 0
+                    """
+                )
+
+                # Withdrawal table.
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS withdrawals (
+                        id SERIAL PRIMARY KEY,
+                        user_id BIGINT NOT NULL,
+                        amount BIGINT NOT NULL,
+                        bank_name TEXT NOT NULL,
+                        account_number TEXT NOT NULL,
+                        account_name TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
                 )
 
                 conn.commit()
+
+                print("Database initialized successfully.")
+
         finally:
             conn.close()
 
@@ -70,13 +168,25 @@ def init_database():
 def get_user(user_id, username=None):
     with db_lock:
         conn = get_connection()
+
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    """ INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET username = COALESCE(EXCLUDED.username, users.username) """,
+                    """
+                    INSERT INTO users (user_id, username)
+                    VALUES (%s, %s)
+                    ON CONFLICT (user_id)
+                    DO UPDATE SET
+                        username = COALESCE(
+                            EXCLUDED.username,
+                            users.username
+                        )
+                    """,
                     (user_id, username),
                 )
+
                 conn.commit()
+
         finally:
             conn.close()
 
@@ -87,26 +197,620 @@ def set_referrer(user_id, referrer_id):
 
     with db_lock:
         conn = get_connection()
+
         try:
             with conn.cursor() as cursor:
-                # Only the first valid referrer is accepted.
                 cursor.execute(
-                    """ UPDATE users SET referred_by = %s WHERE user_id = %s AND referred_by IS NULL AND user_id <> %s AND EXISTS ( SELECT 1 FROM users WHERE user_id = %s ) """,
-                    (referrer_id, user_id, referrer_id, referrer_id),
+                    """
+                    UPDATE users
+                    SET referred_by = %s
+                    WHERE user_id = %s
+                    AND referred_by IS NULL
+                    AND user_id <> %s
+                    AND EXISTS (
+                        SELECT 1
+                        FROM users
+                        WHERE user_id = %s
+                    )
+                    """,
+                    (
+                        referrer_id,
+                        user_id,
+                        referrer_id,
+                        referrer_id,
+                    ),
                 )
+
                 changed = cursor.rowcount > 0
+
                 conn.commit()
+
                 return changed
+
         finally:
             conn.close()
 
 
 def reward_referrer(user_id):
-    """Reward the referrer once, after the referred user passes the join check."""
+    """
+    Give ₦100 to the referrer once.
+    This happens only after the referred user
+    passes the Telegram membership check.
+    """
+
     with db_lock:
         conn = get_connection()
+
         try:
             with conn.cursor() as cursor:
+
+                cursor.execute(
+                    """
+                    SELECT referred_by, referral_rewarded
+                    FROM users
+                    WHERE user_id = %s
+                    FOR UPDATE
+                    """,
+                    (user_id,),
+                )
+
+                row = cursor.fetchone()
+
+                if not row:
+                    conn.rollback()
+                    return False
+
+                referrer_id, already_rewarded = row
+
+                if referrer_id is None:
+                    conn.rollback()
+                    return False
+
+                if int(already_rewarded or 0) == 1:
+                    conn.rollback()
+                    return False
+
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET balance = balance + %s,
+                        referrals = referrals + 1
+                    WHERE user_id = %s
+                    """,
+                    (
+                        REFERRAL_REWARD,
+                        referrer_id,
+                    ),
+                )
+
+                if cursor.rowcount != 1:
+                    conn.rollback()
+                    return False
+
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET referral_rewarded = 1
+                    WHERE user_id = %s
+                    """,
+                    (user_id,),
+                )
+
+                conn.commit()
+
+                print(
+                    f"Referral rewarded: user={user_id}, "
+                    f"referrer={referrer_id}, "
+                    f"amount=₦{REFERRAL_REWARD}"
+                )
+
+                return True
+
+        finally:
+            conn.close()
+
+
+def get_stats(user_id):
+    with db_lock:
+        conn = get_connection()
+
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT balance, referrals
+                    FROM users
+                    WHERE user_id = %s
+                    """,
+                    (user_id,),
+                )
+
+                row = cursor.fetchone()
+
+                if row:
+                    return row
+
+                return (0, 0)
+
+        finally:
+            conn.close()
+
+
+# ============================================================
+# FLASK SERVER
+# ============================================================
+
+app = Flask(__name__)
+
+
+@app.route("/")
+def home():
+    return "Vicky Join Bot is running!"
+
+
+def run_server():
+    port = int(
+        os.environ.get("PORT", "10000")
+    )
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+    )
+
+
+# ============================================================
+# TELEGRAM COMMAND MENU
+# ============================================================
+
+async def post_init(application):
+    await application.bot.set_my_commands(
+        [
+            BotCommand(
+                "start",
+                "Start Freecash_bot",
+            ),
+            BotCommand(
+                "admin",
+                "Open admin panel",
+            ),
+            BotCommand(
+                "help",
+                "Help",
+            ),
+        ]
+    )
+
+
+# ============================================================
+# START
+# ============================================================
+
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    user = update.effective_user
+
+    get_user(
+        user.id,
+        user.username,
+    )
+
+    # Referral link:
+    # /start REFERRER_ID
+    if context.args:
+
+        try:
+            referrer_id = int(
+                context.args[0]
+            )
+
+            set_referrer(
+                user.id,
+                referrer_id,
+            )
+
+        except (
+            ValueError,
+            TypeError,
+        ):
+            pass
+
+    await show_join_page(
+        update,
+        context,
+    )
+
+
+# ============================================================
+# JOIN PAGE
+# ============================================================
+
+async def show_join_page(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "📢 Join Telegram Channel",
+                url=TELEGRAM_LINK,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🟢 Follow WhatsApp Channel",
+                url=WHATSAPP_CHANNEL,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "✅ I've Joined — Check",
+                callback_data="check",
+            )
+        ],
+    ]
+
+    text = (
+        "🔒 *ACCESS LOCKED*\n\n"
+        "To use this bot, please complete "
+        "the requirements below:\n\n"
+        "📢 Join our Telegram Channel\n"
+        "🟢 Follow our WhatsApp Channel\n\n"
+        "After completing both, tap "
+        "*I've Joined — Check*."
+    )
+
+    markup = InlineKeyboardMarkup(
+        keyboard
+    )
+
+    if update.callback_query:
+
+        await update.callback_query.message.edit_text(
+            text,
+            reply_markup=markup,
+            parse_mode="Markdown",
+        )
+
+    else:
+
+        await update.message.reply_text(
+            text,
+            reply_markup=markup,
+            parse_mode="Markdown",
+        )
+
+
+# ============================================================
+# TELEGRAM MEMBERSHIP CHECK
+# ============================================================
+
+async def check_membership(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+
+    await query.answer()
+
+    user_id = query.from_user.id
+
+    telegram_joined = False
+
+    try:
+
+        member = await context.bot.get_chat_member(
+            chat_id=TELEGRAM_CHANNEL,
+            user_id=user_id,
+        )
+
+        print(
+            f"Membership check: "
+            f"user={user_id}, "
+            f"status={member.status}"
+        )
+
+        telegram_joined = member.status in (
+            "member",
+            "administrator",
+            "creator",
+        )
+
+    except Exception as e:
+
+        print(
+            "Telegram membership check error:",
+            e,
+        )
+
+    if not telegram_joined:
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "📢 Join Telegram Channel",
+                    url=TELEGRAM_LINK,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🟢 Follow WhatsApp Channel",
+                    url=WHATSAPP_CHANNEL,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔄 Check Again",
+                    callback_data="check",
+                )
+            ],
+        ]
+
+        await query.message.edit_text(
+            "❌ *Telegram Join Not Detected*\n\n"
+            "Please join the Telegram channel "
+            "first, then tap *Check Again*.\n\n"
+            "If you already joined, make sure "
+            "the bot is an administrator of "
+            "the channel.",
+            reply_markup=InlineKeyboardMarkup(
+                keyboard
+            ),
+            parse_mode="Markdown",
+        )
+
+        return
+
+    # Successful Telegram membership check.
+    rewarded = reward_referrer(
+        user_id
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🚀 Continue",
+                callback_data="continue",
+            )
+        ]
+    ]
+
+    message = (
+        "✅ *Telegram Channel:* Joined\n"
+        "🟢 *WhatsApp Channel:* Completed\n\n"
+        "🎉 Your requirements are complete!\n\n"
+        "Tap *Continue* to access the bot."
+    )
+
+    if rewarded:
+
+        message += (
+            f"\n\n🎁 Your referrer has earned "
+            f"*₦{REFERRAL_REWARD:,}*."
+        )
+
+    await query.message.edit_text(
+        message,
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
+        parse_mode="Markdown",
+    )
+
+
+# ============================================================
+# MAIN USER MENU
+# ============================================================
+
+async def continue_bot(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+
+    await query.answer()
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "👥 My Referrals",
+                callback_data="referrals",
+            ),
+            InlineKeyboardButton(
+                "💰 My Balance",
+                callback_data="balance",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🔗 My Referral Link",
+                callback_data="link",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "💸 Withdraw",
+                callback_data="withdraw",
+            )
+        ],
+    ]
+
+    await query.message.edit_text(
+        "🎉 *Welcome!*\n\n"
+        "Choose an option below:",
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
+        parse_mode="Markdown",
+    )
+
+
+# ============================================================
+# REFERRALS
+# ============================================================
+
+async def referrals(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+
+    await query.answer()
+
+    bal, count = get_stats(
+        query.from_user.id
+    )
+
+    await query.message.edit_text(
+        "👥 *My Referrals*\n\n"
+        f"Successful referrals: *{count}*\n"
+        f"Earned: *₦{count * REFERRAL_REWARD:,}*\n"
+        f"Current balance: *₦{bal:,}*",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="continue",
+                    )
+                ]
+            ]
+        ),
+        parse_mode="Markdown",
+    )
+
+
+# ============================================================
+# BALANCE
+# ============================================================
+
+async def balance(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+
+    await query.answer()
+
+    bal, count = get_stats(
+        query.from_user.id
+    )
+
+    await query.message.edit_text(
+        "💰 *Your Balance*\n\n"
+        f"Balance: *₦{bal:,}*\n"
+        f"Referrals: *{count}*",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="continue",
+                    )
+                ]
+            ]
+        ),
+        parse_mode="Markdown",
+    )
+
+
+# ============================================================
+# REFERRAL LINK
+# ============================================================
+
+async def referral_link(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+
+    await query.answer()
+
+    me = await context.bot.get_me()
+
+    link = (
+        f"https://t.me/"
+        f"{me.username}"
+        f"?start={query.from_user.id}"
+    )
+
+    await query.message.edit_text(
+        "🔗 *Your Referral Link*\n\n"
+        "Share this link with your friends.\n\n"
+        f"`{link}`\n\n"
+        f"💰 You earn *₦{REFERRAL_REWARD:,}* "
+        "for every successful referral.",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="continue",
+                    )
+                ]
+            ]
+        ),
+        parse_mode="Markdown",
+    )
+
+
+# ============================================================
+# WITHDRAWAL
+# ============================================================
+
+async def withdrawal(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+
+    await query.answer()
+
+    user_id = query.from_user.id
+
+    bal, _ = get_stats(user_id)
+
+    if bal < MIN_WITHDRAWAL:
+
+        await query.message.edit_text(
+            "❌ *Withdrawal Unavailable*\n\n"
+            f"Your balance: *₦{bal:,}*\n"
+            f"Minimum withdrawal: "
+            f"*₦{MIN_WITHDRAWAL:,}*",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "🔙 Back",
+                            callback_data="continue",
+                        )
+                    ]
+                ]
+            ),
+            parse_mode="Markdown",
+        )
+
+        return
+
+    await query.message.edit_text(
+        "💸 *Withdrawal Request*\n\n"
+        f"Available balance: *₦{bal:,}*\n\n"
+        "Please send your bank details in "
+        "this format:\n\n"
+        "`Bank Name`\n"
+        "`Account Number`\n"
+        "`Account Name`\n\n"
+        "Example:\n"
+        "`Access Bank`\n"
+        "`0123456789`\n"
+        "`John Doe`",
+        parse_mode="Markdown",
+    )
+
+    context.user_data[
+        "waiting_for_b            with conn.cursor() as cursor:
                 cursor.execute(
                     """ SELECT referred_by, referral_rewarded FROM users WHERE user_id = %s FOR UPDATE """,
                     (user_id,),
