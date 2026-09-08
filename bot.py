@@ -10,27 +10,27 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     ConversationHandler,
+    PicklePersistence,
     filters,
 )
 
 # ==================== CONFIGURATION ====================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+BOT_TOKEN = os.environ.get("8381977048:AAE1hokuUYvJxgtE7umNRTL5oZpmaMdJbNs")
 
 WHATSAPP_LINK = "https://whatsapp.com/channel/0029VbDyRS18F2p6910NlS1j"
 TELEGRAM_GROUP_LINK = "https://t.me/Vickyupdatemayor"
 
 TELEGRAM_GROUP_USERNAME = "@Vickyupdatemayor"
-ADMIN_CHANNEL_ID = -1009876543210  # Ensure this is your numeric Admin Channel ID
+ADMIN_CHANNEL_ID = -6225743234  # Replace with your numeric Admin Channel ID
 
-MIN_WITHDRAWAL = 600
-REFERRAL_BONUS = 100
+MIN_WITHDRAWAL = 300
+REFERRAL_BONUS = 80
 # =======================================================
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-users_db = {} 
 BANK_NAME, ACCOUNT_NUMBER, ACCOUNT_NAME, AMOUNT = range(4)
 
 
@@ -47,16 +47,22 @@ def run_health_check_server():
     server.serve_forever()
 
 
-def get_user_data(user_id):
-    if user_id not in users_db:
-        users_db[user_id] = {
+# --- PERSISTENT DATA HELPER ---
+def get_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    if "users" not in context.bot_data:
+        context.bot_data["users"] = {}
+    
+    if user_id not in context.bot_data["users"]:
+        context.bot_data["users"][user_id] = {
             "balance": 0,
             "referrals": 0,
             "bank_name": None,
             "acc_num": None,
             "acc_name": None,
+            "bonus_credited": False,
+            "referred_by": None
         }
-    return users_db[user_id]
+    return context.bot_data["users"][user_id]
 
 
 async def is_user_subscribed(bot, user_id):
@@ -71,12 +77,12 @@ async def is_user_subscribed(bot, user_id):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
-    get_user_data(user_id)
+    user_data = get_user_data(context, user_id)
 
     if context.args and context.args[0].isdigit():
         referrer_id = int(context.args[0])
-        if referrer_id != user_id and "referred_by" not in users_db[user_id]:
-            users_db[user_id]["referred_by"] = referrer_id
+        if referrer_id != user_id and user_data["referred_by"] is None:
+            user_data["referred_by"] = referrer_id
 
     if not await is_user_subscribed(context.bot, user_id):
         keyboard = [
@@ -103,20 +109,20 @@ async def check_joined_callback(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    get_user_data(user_id)
+    user_data = get_user_data(context, user_id)
 
     if await is_user_subscribed(context.bot, user_id):
-        referrer_id = users_db[user_id].get("referred_by")
-        if referrer_id and not users_db[user_id].get("bonus_credited"):
-            get_user_data(referrer_id)
-            users_db[referrer_id]["balance"] += REFERRAL_BONUS
-            users_db[referrer_id]["referrals"] += 1
-            users_db[user_id]["bonus_credited"] = True
+        referrer_id = user_data.get("referred_by")
+        if referrer_id and not user_data.get("bonus_credited"):
+            ref_data = get_user_data(context, referrer_id)
+            ref_data["balance"] += REFERRAL_BONUS
+            ref_data["referrals"] += 1
+            user_data["bonus_credited"] = True
             
             try:
                 await context.bot.send_message(
                     chat_id=referrer_id,
-                    text=f"🎉 **New Referral!** You earned ₦{REFERRAL_BONUS}. Your new balance is ₦{users_db[referrer_id]['balance']}."
+                    text=f"🎉 **New Referral!** You earned ₦{REFERRAL_BONUS}. Your new balance is ₦{ref_data['balance']}."
                 )
             except Exception:
                 pass
@@ -148,7 +154,7 @@ async def send_main_menu_direct(chat_id, context):
 
 async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    data = get_user_data(user_id)
+    data = get_user_data(context, user_id)
     text = (
         f"💼 **Your Wallet**\n\n"
         f"💰 Balance: ₦{data['balance']}\n"
@@ -160,7 +166,7 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    get_user_data(user_id)
+    get_user_data(context, user_id)
     bot_username = (await context.bot.get_me()).username
     ref_link = f"https://t.me/{bot_username}?start={user_id}"
     
@@ -174,7 +180,7 @@ async def show_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_withdrawal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    data = get_user_data(user_id)
+    data = get_user_data(context, user_id)
 
     if data["balance"] < MIN_WITHDRAWAL:
         await update.message.reply_text(
@@ -226,7 +232,7 @@ async def get_account_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    data = get_user_data(user_id)
+    data = get_user_data(context, user_id)
     text = update.message.text.strip()
 
     if not text.isdigit():
@@ -297,10 +303,12 @@ async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text(text=query.message.text + "\n\n🟢 **STATUS: APPROVED**", parse_mode="Markdown")
 
     elif action == "rej":
+        user_data = get_user_data(context, user_id)
+        user_data["balance"] += amount  # Refund balance back to user if rejected
         try:
             await context.bot.send_message(
                 chat_id=user_id,
-                text=f"❌ **Withdrawal Rejected.**\n\nYour withdrawal request for ₦{amount} was declined by the admin.",
+                text=f"❌ **Withdrawal Rejected.**\n\nYour withdrawal request for ₦{amount} was declined by the admin. The funds have been refunded to your wallet.",
                 parse_mode="Markdown"
             )
         except Exception:
@@ -311,7 +319,15 @@ async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_
 def main():
     threading.Thread(target=run_health_check_server, daemon=True).start()
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    # Enable persistent storage saved to disk
+    persistence = PicklePersistence(filepath="bot_data.pkl")
+
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .persistence(persistence)
+        .build()
+    )
 
     withdraw_handler = ConversationHandler(
         entry_points=[
