@@ -11,10 +11,16 @@ from telegram.ext import (
 )
 
 # ==================== CONFIGURATION ====================
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-CHANNEL_USERNAME = "@YourChannelUsername"  # e.g., @mychannel (must include @)
-CHANNEL_ID = -1001234567890              # Numeric ID of your channel (Bot must be Admin)
-ADMIN_CHANNEL_ID = -1009876543210        # Numeric ID of your private Admin channel/group
+BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Get from @BotFather on Telegram
+
+# Force Sub Links
+WHATSAPP_LINK = "https://whatsapp.com/channel/0029VbDyRS18F2p6910NlS1j"
+TELEGRAM_GROUP_LINK = "https://t.me/Vickyupdatemayor"
+
+# Channel IDs for API checks & Admin Notifications
+# Note: For public channel @Vickyupdatemayor, the handle can be checked directly.
+TELEGRAM_GROUP_USERNAME = "@Vickyupdatemayor"
+ADMIN_CHANNEL_ID = -1009876543210  # Replace with numeric ID of your Admin Channel/Group
 
 MIN_WITHDRAWAL = 600
 REFERRAL_BONUS = 100
@@ -25,11 +31,10 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-# In-memory storage (Replace with SQLite/PostgreSQL database for production)
+# In-memory database
 users_db = {} 
-# Format: { user_id: {"balance": 0, "referrals": 0, "bank_name": "", "acc_num": "", "acc_name": ""} }
 
-# States for withdrawal conversation
+# Conversation States
 BANK_NAME, ACCOUNT_NUMBER, ACCOUNT_NAME, AMOUNT = range(4)
 
 
@@ -47,7 +52,7 @@ def get_user_data(user_id):
 
 async def is_user_subscribed(bot, user_id):
     try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        member = await bot.get_chat_member(chat_id=TELEGRAM_GROUP_USERNAME, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
     except Exception as e:
         logging.error(f"Error checking subscription: {e}")
@@ -60,7 +65,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     get_user_data(user_id)
 
-    # Check for referral link (?start=REFERRER_ID)
+    # Check for referral deep link
     if context.args and context.args[0].isdigit():
         referrer_id = int(context.args[0])
         if referrer_id != user_id and "referred_by" not in users_db[user_id]:
@@ -69,13 +74,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Force Sub Check
     if not await is_user_subscribed(context.bot, user_id):
         keyboard = [
-            [InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{CHANNEL_USERNAME.replace('@', '')}")],
+            [InlineKeyboardButton("1️⃣ Join WhatsApp Channel 🟢", url=WHATSAPP_LINK)],
+            [InlineKeyboardButton("2️⃣ Join Telegram Group ✈️", url=TELEGRAM_GROUP_LINK)],
             [InlineKeyboardButton("Joined ✅", callback_data="check_joined")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            f"⚠️ You must join our channel {CHANNEL_USERNAME} to access the bot and start earning!",
-            reply_markup=reply_markup
+            "⚠️ **Mandatory Verification Required!**\n\n"
+            "To access the bot and start earning, you must join both channels below:\n\n"
+            "1. Join our **WhatsApp Channel**\n"
+            "2. Join our **Telegram Group**\n\n"
+            "Click **Joined ✅** once completed.",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
         )
         return
 
@@ -88,7 +99,7 @@ async def check_joined_callback(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = query.from_user.id
 
     if await is_user_subscribed(context.bot, user_id):
-        # Credit referral bonus if user was referred and hasn't been credited yet
+        # Credit referral bonus if valid referral
         referrer_id = users_db[user_id].get("referred_by")
         if referrer_id and not users_db[user_id].get("bonus_credited"):
             users_db[referrer_id]["balance"] += REFERRAL_BONUS
@@ -104,10 +115,10 @@ async def check_joined_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 pass
 
         await query.message.delete()
-        await context.bot.send_message(chat_id=user_id, text="✅ Membership verified! Welcome.")
+        await context.bot.send_message(chat_id=user_id, text="✅ Verification complete! Welcome to the bot.")
         await send_main_menu_direct(user_id, context)
     else:
-        await query.message.reply_text("❌ You have not joined the channel yet. Please join and try again.")
+        await query.message.reply_text("❌ Membership not verified! Please ensure you have joined the Telegram Group and WhatsApp channel.")
 
 
 async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -172,7 +183,7 @@ async def start_withdrawal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["acc_num"] = data["acc_num"]
         context.user_data["acc_name"] = data["acc_name"]
         await update.message.reply_text(
-            f"🏦 Saved Payment Details Found:\n"
+            f"🏦 **Saved Payment Details Found:**\n"
             f"• Bank: {data['bank_name']}\n"
             f"• Account Number: {data['acc_num']}\n"
             f"• Account Name: {data['acc_name']}\n\n"
@@ -226,12 +237,12 @@ async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ You cannot withdraw more than your current balance (₦{data['balance']}). Try again:")
         return AMOUNT
 
-    # Save payment details for future use
+    # Save payment details
     data["bank_name"] = context.user_data["bank_name"]
     data["acc_num"] = context.user_data["acc_num"]
     data["acc_name"] = context.user_data["acc_name"]
 
-    # Deduct balance temporarily pending admin decision
+    # Deduct balance pending review
     data["balance"] -= amount
 
     # Notify Admin Channel
@@ -263,7 +274,7 @@ async def cancel_withdrawal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# --- ADMIN CALLBACK ACTIONS ---
+# --- ADMIN ACTIONS ---
 async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -296,11 +307,10 @@ async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text(text=query.message.text + "\n\n🔴 **STATUS: REJECTED**", parse_mode="Markdown")
 
 
-# --- MAIN BOT RUNNER ---
+# --- MAIN ---
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Conversation Handler for Withdrawals
     withdraw_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.Regex("^💸 Withdraw$"), start_withdrawal),
@@ -315,12 +325,10 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel_withdrawal)],
     )
 
-    # Base Command & Callback Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(check_joined_callback, pattern="^check_joined$"))
     app.add_handler(CallbackQueryHandler(admin_decision_callback, pattern="^(app|rej)_"))
 
-    # Menu Message Handlers
     app.add_handler(MessageHandler(filters.Regex("^💰 Balance / Wallet$"), show_balance))
     app.add_handler(MessageHandler(filters.Regex("^👥 Refer & Earn$"), show_referral))
     app.add_handler(withdraw_handler)
