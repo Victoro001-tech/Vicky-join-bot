@@ -134,7 +134,7 @@ def reward_referrer(user_id):
                     return False
 
                 cursor.execute(
-                    """ UPDATE users SET referral_rewarded = TRUE WHERE user_id = %s """,
+                    """ UPDATE users SET referral_rewarded = 1 WHERE user_id = %s """,
                     (user_id,),
                 )
 
