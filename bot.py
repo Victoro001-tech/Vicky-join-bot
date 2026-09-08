@@ -167,6 +167,9 @@ def main_keyboard():
                 InlineKeyboardButton("🔗 Invite Friends", callback_data="invite"),
             ],
             [
+                InlineKeyboardButton("💸 Withdraw", callback_data="withdraw"),
+            ],
+            [
                 InlineKeyboardButton("ℹ️ Help", callback_data="help"),
             ],
         ]
