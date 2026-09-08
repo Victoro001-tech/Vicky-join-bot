@@ -677,9 +677,16 @@ def main():
         daemon=True,
     ).start()
 
-    application = Application.builder().token(BOT_TOKEN).build()
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .build()
+    )
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("admin", admin_command))
+
     application.add_handler(
         CallbackQueryHandler(
             check_membership,
