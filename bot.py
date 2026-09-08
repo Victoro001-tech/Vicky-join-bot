@@ -38,6 +38,7 @@ def init_database():
         with conn.cursor() as cursor:
             cursor.execute(""" CREATE TABLE IF NOT EXISTS users ( user_id BIGINT PRIMARY KEY, username TEXT, balance INTEGER DEFAULT 0, referrals INTEGER DEFAULT 0, referred_by BIGINT, referral_rewarded INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ) """)
             cursor.execute(""" CREATE TABLE IF NOT EXISTS withdrawals ( id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, amount INTEGER NOT NULL, method TEXT NOT NULL, details TEXT NOT NULL, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ) """)
+            cursor.execute(""" ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS processed_at TIMESTAMP """)
             conn.commit()
     finally:
         db_pool.putconn(conn)
@@ -209,26 +210,40 @@ async def withdraw_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     amount = context.user_data.get("withdraw_amount")
     method = context.user_data.get("withdraw_method")
     row = get_user(user.id)
-    if not amount or not method or not row or amount > row[2]:
-        await update.message.reply_text("❌ Your withdrawal session expired. Please press Withdraw again.")
+    if not amount or not method or not details or not row:
+        await update.message.reply_text("❌ Your withdrawal session expired. Please press Withdraw again.", reply_markup=main_keyboard())
         context.user_data.clear()
         return ConversationHandler.END
 
-    db_execute(""" INSERT INTO withdrawals (user_id, amount, method, details, status) VALUES (%s,%s,%s,%s,'pending') """, (user.id, amount, method, details))
+    # Reserve the funds immediately so the same balance cannot be withdrawn twice.
+    reserved = db_execute(""" UPDATE users SET balance = balance - %s WHERE user_id = %s AND balance >= %s RETURNING balance """, (amount, user.id, amount), fetchone=True)
+    if not reserved:
+        await update.message.reply_text("❌ Insufficient balance. Please start the withdrawal again.", reply_markup=main_keyboard())
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    withdrawal = db_execute(""" INSERT INTO withdrawals (user_id, amount, method, details, status) VALUES (%s,%s,%s,%s,'pending') RETURNING id """, (user.id, amount, method, details), fetchone=True)
+    withdrawal_id = withdrawal[0]
 
     if ADMIN_ID:
         try:
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Approve", callback_data=f"wd_approve_{withdrawal_id}"),
+                InlineKeyboardButton("❌ Reject", callback_data=f"wd_reject_{withdrawal_id}"),
+            ]])
             await context.bot.send_message(
                 chat_id=int(ADMIN_ID),
                 text=(
                     "💸 <b>New Withdrawal Request</b>\n\n"
+                    f"Request ID: <code>{withdrawal_id}</code>\n"
                     f"User: @{user.username or 'no_username'}\n"
                     f"User ID: <code>{user.id}</code>\n"
                     f"Amount: <b>{amount}</b>\n"
                     f"Method: <b>{method}</b>\n"
-                    f"Details: <code>{details}</code>"
+                    f"Details: <code>{details}</code>\n\n"
+                    "Status: <b>PENDING</b>"
                 ),
-                parse_mode="HTML"
+                parse_mode="HTML", reply_markup=keyboard
             )
         except Exception:
             logger.exception("Could not notify admin")
@@ -237,10 +252,70 @@ async def withdraw_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✅ <b>Withdrawal request submitted!</b>\n\n"
         f"Amount: <b>{amount}</b>\nMethod: <b>{method}</b>\n"
-        "Your request is now pending review.",
+        "Your funds have been reserved and your request is pending admin review.",
         parse_mode="HTML", reply_markup=main_keyboard()
     )
     return ConversationHandler.END
+
+async def admin_withdrawal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not ADMIN_ID or str(query.from_user.id) != str(ADMIN_ID):
+        await query.answer("Not authorized.", show_alert=True)
+        return
+
+    parts = query.data.split("_")
+    if len(parts) != 3 or parts[0] != "wd" or parts[1] not in ("approve", "reject"):
+        return
+    action, request_id = parts[1], parts[2]
+    try:
+        request_id = int(request_id)
+    except ValueError:
+        await query.edit_message_text("❌ Invalid withdrawal request.")
+        return
+
+    request = db_execute(""" SELECT id, user_id, amount, method, details, status FROM withdrawals WHERE id=%s """, (request_id,), fetchone=True)
+    if not request:
+        await query.edit_message_text("❌ Withdrawal request not found.")
+        return
+
+    req_id, user_id, amount, method, details, status = request
+    if status != "pending":
+        await query.answer(f"Already {status}.", show_alert=True)
+        return
+
+    if action == "approve":
+        updated = db_execute(""" UPDATE withdrawals SET status='approved', processed_at=CURRENT_TIMESTAMP WHERE id=%s AND status='pending' RETURNING id """, (req_id,), fetchone=True)
+        if not updated:
+            await query.answer("Already processed.", show_alert=True)
+            return
+        new_text = (
+            f"✅ <b>Withdrawal APPROVED</b>\n\nRequest ID: <code>{req_id}</code>\n"
+            f"User ID: <code>{user_id}</code>\nAmount: <b>{amount}</b>\n"
+            f"Method: <b>{method}</b>\nDetails: <code>{details}</code>"
+        )
+        user_text = f"✅ <b>Withdrawal Approved</b>\n\nAmount: <b>{amount}</b>\nMethod: <b>{method}</b>\nYour withdrawal has been approved."
+    else:
+        updated = db_execute(""" UPDATE withdrawals SET status='rejected', processed_at=CURRENT_TIMESTAMP WHERE id=%s AND status='pending' RETURNING id """, (req_id,), fetchone=True)
+        if not updated:
+            await query.answer("Already processed.", show_alert=True)
+            return
+        # Return the reserved funds when an admin rejects the request.
+        db_execute("UPDATE users SET balance = balance + %s WHERE user_id=%s", (amount, user_id))
+        new_text = (
+            f"❌ <b>Withdrawal REJECTED</b>\n\nRequest ID: <code>{req_id}</code>\n"
+            f"User ID: <code>{user_id}</code>\nAmount: <b>{amount}</b>\n"
+            f"Method: <b>{method}</b>\nDetails: <code>{details}</code>\n\n"
+            "The amount has been returned to the user's balance."
+        )
+        user_text = f"❌ <b>Withdrawal Rejected</b>\n\nAmount: <b>{amount}</b>\nMethod: <b>{method}</b>\nYour withdrawal was rejected and the amount has been returned to your balance."
+
+    await query.edit_message_text(new_text, parse_mode="HTML")
+    try:
+        await context.bot.send_message(chat_id=user_id, text=user_text, parse_mode="HTML", reply_markup=main_keyboard())
+    except Exception:
+        logger.exception("Could not notify user about withdrawal decision")
 
 async def withdraw_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
@@ -259,30 +334,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "balance":
         text = f"💰 <b>Your Balance</b>\n\nBalance: <b>{row[2]}</b>\nReferrals: <b>{row[3]}</b>"
     elif query.data == "referrals":
-        text = f"👥 <b>Your Referrals</b>\n\nYou have referred <b>{row[3]}</b> user(s)."
+        text = f"👥 <b>Your Referrals</b>\n\nYou have referred <b>{row[3]}</b> user(s).\nYour balance is <b>{row[2]}</b>."
     elif query.data == "invite":
         bot = await context.bot.get_me()
         link = f"https://t.me/{bot.username}?start=ref_{user_id}"
         text = f"🔗 <b>Your Referral Link</b>\n\n<code>{link}</code>\n\nSend this link to your friends."
-    elif query.data == "withdraw":
-        if row[2] < MIN_WITHDRAWAL:
-            text = (
-                f"💸 <b>Withdrawal</b>\n\nYour balance: <b>{row[2]}</b>\n"
-                f"Minimum withdrawal: <b>{MIN_WITHDRAWAL}</b>\n\n"
-                "Keep earning until you reach the minimum."
-            )
-        else:
-            await query.message.reply_text(
-                f"💸 <b>Withdrawal Request</b>\n\nAvailable balance: <b>{row[2]}</b>\n"
-                f"Minimum withdrawal: <b>{MIN_WITHDRAWAL}</b>\n\n"
-                "Enter the amount you want to withdraw:",
-                parse_mode="HTML"
-            )
-            context.user_data.clear()
-            context.user_data["withdraw_button_started"] = True
-            return
-    else:
+    elif query.data == "help":
         text = HELP_TEXT
+    else:
+        return
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=main_keyboard())
 
 flask_app = Flask(__name__)
@@ -323,6 +383,7 @@ def main():
     application.add_handler(CommandHandler("invite", invite))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(withdrawal)
+    application.add_handler(CallbackQueryHandler(admin_withdrawal_callback, pattern=r"^wd_(approve|reject)_\d+$"))
     application.add_handler(CallbackQueryHandler(button_callback))
 
     logger.info("Bot is now running.")
