@@ -11,7 +11,7 @@ from telegram.ext import (
 )
 
 # ==================== CONFIGURATION ====================
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Get from @BotFather on Telegram
+BOT_TOKEN = "8381977048:AAE1hokuUYvJxgtE7umNRTL5oZpmaMdJbNs"  # Get from @BotFather on Telegram
 
 # Force Sub Links
 WHATSAPP_LINK = "https://whatsapp.com/channel/0029VbDyRS18F2p6910NlS1j"
