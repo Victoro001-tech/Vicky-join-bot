@@ -401,6 +401,235 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ),
         parse_mode="Markdown",
     )
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    get_user(user.id, user.username)
+
+    if context.args:
+        try:
+            referrer_id = int(context.args[0])
+            set_referrer(user.id, referrer_id)
+        except (ValueError, TypeError):
+            pass
+
+    await show_join_page(update, context)
+
+
+async def show_join_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "📢 Join Telegram Channel",
+                url=TELEGRAM_LINK,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🟢 Follow WhatsApp Channel",
+                url=WHATSAPP_CHANNEL,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "✅ I've Joined — Check",
+                callback_data="check",
+            )
+        ],
+    ]
+
+    text = (
+        "🔒 *ACCESS LOCKED*\n\n"
+        "To use this bot, please complete the requirements below:\n\n"
+        "📢 Join our Telegram Channel\n"
+        "🟢 Follow our WhatsApp Channel\n\n"
+        "After completing both, tap *I've Joined — Check*."
+    )
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.message.edit_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+        )
+
+
+async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+
+    try:
+        member = await context.bot.get_chat_member(
+            chat_id=TELEGRAM_CHANNEL,
+            user_id=user_id,
+        )
+
+        print(
+            f"Membership check: user={user_id}, "
+            f"status={member.status}"
+        )
+
+        telegram_joined = member.status in (
+            "member",
+            "administrator",
+            "creator",
+        )
+
+    except Exception as e:
+        print(f"Telegram membership check error: {e}")
+        telegram_joined = False
+
+    if telegram_joined:
+        rewarded = reward_referrer(user_id)
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🚀 Continue",
+                    callback_data="continue",
+                )
+            ]
+        ]
+
+        message = (
+            "✅ *Telegram Channel:* Joined\n"
+            "🟢 *WhatsApp Channel:* Completed\n\n"
+            "🎉 Your requirements are complete!\n\n"
+            "Tap *Continue* to access the bot."
+        )
+
+        if rewarded:
+            message += (
+                f"\n\n🎁 Your referrer has earned "
+                f"*₦{REFERRAL_REWARD}*."
+            )
+
+        await query.message.edit_text(
+            message,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown",
+        )
+
+    else:
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "📢 Join Telegram Channel",
+                    url=TELEGRAM_LINK,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🟢 Follow WhatsApp Channel",
+                    url=WHATSAPP_CHANNEL,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔄 Check Again",
+                    callback_data="check",
+                )
+            ],
+        ]
+
+        await query.message.edit_text(
+            "❌ *Telegram Join Not Detected*\n\n"
+            "Please join the Telegram channel first, "
+            "then tap *Check Again*.\n\n"
+            "If you have already joined, make sure "
+            "the bot is an administrator of the channel.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown",
+        )
+
+
+async def continue_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "👥 My Referrals",
+                callback_data="referrals",
+            ),
+            InlineKeyboardButton(
+                "💰 My Balance",
+                callback_data="balance",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🔗 My Referral Link",
+                callback_data="link",
+            )
+        ],
+    ]
+
+    await query.message.edit_text(
+        "🎉 *Welcome!*\n\n"
+        "Choose an option below:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown",
+    )
+
+
+async def referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    balance, count = get_stats(query.from_user.id)
+
+    await query.message.edit_text(
+        "👥 *My Referrals*\n\n"
+        f"Successful referrals: *{count}*\n"
+        f"Earned: *₦{count * REFERRAL_REWARD:,}*\n"
+        f"Current balance: *₦{balance:,}*",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="continue",
+                    )
+                ]
+            ]
+        ),
+        parse_mode="Markdown",
+    )
+
+
+async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    bal, count = get_stats(query.from_user.id)
+
+    await query.message.edit_text(
+        "💰 *Your Balance*\n\n"
+        f"Balance: *₦{bal:,}*\n"
+        f"Referrals: *{count}*",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="continue",
+                    )
+                ]
+            ]
+        ),
+        parse_mode="Markdown",
+    )
 
 
 async def referral_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
