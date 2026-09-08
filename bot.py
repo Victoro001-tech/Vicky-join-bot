@@ -15,7 +15,7 @@ from telegram.ext import (
 )
 
 # ==================== CONFIGURATION ====================
-BOT_TOKEN = os.environ.get("8381977048:AAE1hokuUYvJxgtE7umNRTL5oZpmaMdJbNs")
+8381977048:AAE1hokuUYvJxgtE7umNRTL5oZpmaMdJbNs = os.environ.get"8381977048:AAE1hokuUYvJxgtE7umNRTL5oZpmaMdJbNs"
 
 WHATSAPP_LINK = "https://whatsapp.com/channel/0029VbDyRS18F2p6910NlS1j"
 TELEGRAM_GROUP_LINK = "https://t.me/Vickyupdatemayor"
