@@ -604,4 +604,217 @@ async def admin_withdrawal_action(update: Update, context: ContextTypes.DEFAULT_
 
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Loc
+            # Lock the withdrawal so two admins cannot process it twice.
+            cur.execute(""" SELECT * FROM withdrawals WHERE id = %s FOR UPDATE """, (withdrawal_id,))
+            withdrawal = cur.fetchone()
+
+            if not withdrawal:
+                conn.rollback()
+                await query.edit_message_text("❌ Withdrawal request not found.")
+                return
+
+            if withdrawal["status"] != "pending":
+                conn.rollback()
+                await query.edit_message_text(
+                    f"ℹ️ This withdrawal was already {withdrawal['status']}."
+                )
+                return
+
+            if action == "approve":
+                cur.execute(""" UPDATE withdrawals SET status = 'approved', admin_id = %s, processed_at = NOW() WHERE id = %s AND status = 'pending' """, (query.from_user.id, withdrawal_id))
+
+                new_status = "approved"
+
+            elif action == "reject":
+                # Return the reserved amount to the user only once.
+                cur.execute(""" UPDATE users SET balance = balance + %s, updated_at = NOW() WHERE user_id = %s """, (withdrawal["amount"], withdrawal["user_id"]))
+
+                cur.execute(""" UPDATE withdrawals SET status = 'rejected', admin_id = %s, processed_at = NOW(), admin_note = 'Rejected by admin' WHERE id = %s AND status = 'pending' """, (query.from_user.id, withdrawal_id))
+
+                new_status = "rejected"
+
+            else:
+                conn.rollback()
+                return
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        logger.exception("Failed to process withdrawal %s", withdrawal_id)
+        await query.edit_message_text(
+            "⚠️ Could not process this withdrawal. Nothing was changed."
+        )
+        return
+    finally:
+        conn.close()
+
+    if new_status == "approved":
+        admin_message = (
+            f"✅ <b>Withdrawal #{withdrawal_id} approved.</b>\n\n"
+            f"Amount: ₦{int(withdrawal['amount']):,}\n"
+            f"User ID: <code>{withdrawal['user_id']}</code>"
+        )
+        user_message = (
+            f"✅ <b>Withdrawal approved!</b>\n\n"
+            f"Amount: ₦{int(withdrawal['amount']):,}\n"
+            f"Request ID: <code>#{withdrawal_id}</code>"
+        )
+    else:
+        admin_message = (
+            f"❌ <b>Withdrawal #{withdrawal_id} rejected.</b>\n\n"
+            f"₦{int(withdrawal['amount']):,} has been returned to the user's balance."
+        )
+        user_message = (
+            f"❌ <b>Withdrawal rejected.</b>\n\n"
+            f"₦{int(withdrawal['amount']):,} has been returned to your balance.\n"
+            f"Request ID: <code>#{withdrawal_id}</code>"
+        )
+
+    await query.edit_message_text(admin_message, parse_mode="HTML")
+
+    try:
+        await context.bot.send_message(
+            chat_id=withdrawal["user_id"],
+            text=user_message,
+            parse_mode="HTML",
+            reply_markup=main_keyboard(),
+        )
+    except Exception:
+        logger.exception("Could not notify user %s", withdrawal["user_id"])
+
+
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("Unauthorized.")
+        return
+
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(""" SELECT id, user_id, amount, method, status, created_at FROM withdrawals WHERE status = 'pending' ORDER BY created_at ASC LIMIT 50 """)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        await update.message.reply_text("✅ No pending withdrawals.")
+        return
+
+    lines = ["💸 <b>Pending Withdrawals</b>\n"]
+    for row in rows:
+        lines.append(
+            f"#{row['id']} — ₦{int(row['amount']):,} — "
+            f"{row['method']} — user {row['user_id']}"
+        )
+
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.exception("Unhandled Telegram error", exc_info=context.error)
+
+
+def run_web_server():
+    app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
+
+
+def validate_config():
+    missing = []
+    if not BOT_TOKEN:
+        missing.append("BOT_TOKEN")
+    if not DATABASE_URL:
+        missing.append("DATABASE_URL")
+    if not ADMIN_IDS:
+        missing.append("ADMIN_IDS")
+
+    if missing:
+        raise RuntimeError(
+            "Missing required Render environment variables: "
+            + ", ".join(missing)
+        )
+
+
+def build_application():
+    application = Application.builder().token(BOT_TOKEN).build()
+
+    withdrawal_conversation = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(withdraw_callback, pattern=r"^withdraw$")
+        ],
+        states={
+            WITHDRAW_AMOUNT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_amount),
+                CallbackQueryHandler(cancel_withdraw, pattern=r"^cancel_withdraw$"),
+            ],
+            WITHDRAW_METHOD: [
+                CallbackQueryHandler(withdraw_method, pattern=r"^method_(bank|other)$"),
+                CallbackQueryHandler(cancel_withdraw, pattern=r"^cancel_withdraw$"),
+            ],
+            WITHDRAW_DETAILS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_details),
+                CallbackQueryHandler(cancel_withdraw, pattern=r"^cancel_withdraw$"),
+            ],
+        },
+        fallbacks=[
+            CallbackQueryHandler(cancel_withdraw, pattern=r"^cancel_withdraw$")
+        ],
+        allow_reentry=True,
+        per_user=True,
+        per_chat=True,
+    )
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("admin", admin_command))
+
+    # Withdrawal handler is registered before the generic callback handlers.
+    application.add_handler(withdrawal_conversation)
+
+    application.add_handler(
+        CallbackQueryHandler(
+            admin_withdrawal_action,
+            pattern=r"^wd_(approve|reject)_\d+$",
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(check_join, pattern=r"^check_join$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(balance_callback, pattern=r"^balance$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(referrals_callback, pattern=r"^referrals$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(my_link_callback, pattern=r"^my_link$")
+    )
+
+    application.add_error_handler(error_handler)
+    return application
+
+
+def main():
+    validate_config()
+    init_database()
+
+    # Start the web server in the background for Render's health check.
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
+
+    application = build_application()
+
+    logger.info("Starting Vicky Join Bot...")
+    logger.info("Admins: %s", sorted(ADMIN_IDS))
+    logger.info("Minimum withdrawal: ₦%s", MIN_WITHDRAWAL)
+    logger.info("Referral reward: ₦%s", REFERRAL_REWARD)
+
+    # Telegram polling. drop_pending_updates prevents old button presses
+    # from being replayed after a deployment.
+    application.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+    )
+
+
+if __name__ == "__main__":
+    main()
