@@ -662,7 +662,11 @@ async def referral_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 # MAIN
 # =========================
-
+async def post_init(application):
+    await application.bot.set_my_commands([
+        BotCommand("start", "Start Freecash_bot"),
+        BotCommand("admin", "Open admin panel"),
+    ])
 def main():
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN environment variable is missing.")
