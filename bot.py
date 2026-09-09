@@ -19,16 +19,15 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "8361977048:AAE1hukuUYJsgtE7uwNRTL5oZpms
 
 WHATSAPP_LINK = "https://whatsapp.com/channel/0029VbDyRS18F2p6910NlS1j"
 TELEGRAM_GROUP_LINK = "https://t.me/Vickyupdatemayor"
-
 TELEGRAM_GROUP_USERNAME = "@Vickyupdatemayor"
 
-# Numeric ID of your Admin Channel (-1004487917080)
-ADMIN_CHANNEL_ID = -1004487917080  
+# Numeric ID of your Admin Channel (starts with -100)
+ADMIN_CHANNEL_ID = -1009876543210  
 
-# YOUR Personal Telegram User ID (6225743234)
-ADMIN_USER_ID = 6225743234  
+# YOUR Personal Telegram User ID (Get yours from @userinfobot)
+ADMIN_USER_ID = 123456789  
 
-MIN_WITHDRAWAL = 800
+MIN_WITHDRAWAL = 600
 REFERRAL_BONUS = 100
 # =======================================================
 
@@ -36,7 +35,9 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
+# Conversation States
 BANK_NAME, ACCOUNT_NUMBER, ACCOUNT_NAME, AMOUNT = range(4)
+WA_PROOF = 4
 
 
 # --- HEALTH CHECK SERVER ---
@@ -65,17 +66,18 @@ def get_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int):
             "acc_num": None,
             "acc_name": None,
             "bonus_credited": False,
-            "referred_by": None
+            "referred_by": None,
+            "wa_verified": False
         }
     return context.bot_data["users"][user_id]
 
 
-async def is_user_subscribed(bot, user_id):
+async def is_user_subscribed_tg(bot, user_id):
     try:
         member = await bot.get_chat_member(chat_id=TELEGRAM_GROUP_USERNAME, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
     except Exception as e:
-        logging.error(f"Error checking subscription: {e}")
+        logging.error(f"Error checking Telegram subscription: {e}")
         return False
 
 
@@ -89,7 +91,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if referrer_id != user_id and user_data["referred_by"] is None:
             user_data["referred_by"] = referrer_id
 
-    if not await is_user_subscribed(context.bot, user_id):
+    # Check both Telegram Group & WhatsApp Verification
+    tg_joined = await is_user_subscribed_tg(context.bot, user_id)
+    wa_verified = user_data.get("wa_verified", False)
+
+    if not (tg_joined and wa_verified):
         keyboard = [
             [InlineKeyboardButton("1️⃣ Join WhatsApp Channel 🟢", url=WHATSAPP_LINK)],
             [InlineKeyboardButton("2️⃣ Join Telegram Group ✈️", url=TELEGRAM_GROUP_LINK)],
@@ -116,14 +122,80 @@ async def check_joined_callback(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = query.from_user.id
     user_data = get_user_data(context, user_id)
 
-    if await is_user_subscribed(context.bot, user_id):
+    tg_joined = await is_user_subscribed_tg(context.bot, user_id)
+    
+    if not tg_joined:
+        await query.message.reply_text("❌ You have not joined our Telegram group yet! Please join and try again.")
+        return
+
+    if not user_data.get("wa_verified", False):
+        await query.message.reply_text(
+            "📲 **WhatsApp Verification Required**\n\n"
+            "Please send your **WhatsApp Name or Phone Number** (or send a screenshot proving you joined the channel) right here to submit for verification:"
+        )
+        return WA_PROOF
+
+    await process_full_verification(context, user_id, query.message)
+
+
+async def receive_wa_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
+    
+    admin_keyboard = [
+        [
+            InlineKeyboardButton("✅ Verify WA", callback_data=f"vwa_{user_id}"),
+            InlineKeyboardButton("❌ Reject WA", callback_data=f"rwa_{user_id}")
+        ]
+    ]
+    admin_markup = InlineKeyboardMarkup(admin_keyboard)
+
+    admin_msg = (
+        f"📲 **New WhatsApp Join Verification Request**\n\n"
+        f"👤 User: {user.full_name} (`{user_id}`)\n"
+    )
+
+    if update.message.photo:
+        photo_id = update.message.photo[-1].file_id
+        await context.bot.send_photo(
+            chat_id=ADMIN_CHANNEL_ID,
+            photo=photo_id,
+            caption=admin_msg + "🖼 Proof: Screenshot attached below.",
+            reply_markup=admin_markup,
+            parse_mode="Markdown"
+        )
+    else:
+        proof_text = update.message.text
+        await context.bot.send_message(
+            chat_id=ADMIN_CHANNEL_ID,
+            text=admin_msg + f"💬 Proof Text: `{proof_text}`",
+            reply_markup=admin_markup,
+            parse_mode="Markdown"
+        )
+
+    await update.message.reply_text("✅ Proof submitted! Your WhatsApp verification request is under admin review.")
+    return ConversationHandler.END
+
+
+async def admin_wa_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data.split("_")
+    action = data[0]
+    user_id = int(data[1])
+    user_data = get_user_data(context, user_id)
+
+    if action == "vwa":
+        user_data["wa_verified"] = True
+        
+        # Credit referral bonus if applicable
         referrer_id = user_data.get("referred_by")
         if referrer_id and not user_data.get("bonus_credited"):
             ref_data = get_user_data(context, referrer_id)
             ref_data["balance"] += REFERRAL_BONUS
             ref_data["referrals"] += 1
             user_data["bonus_credited"] = True
-            
             try:
                 await context.bot.send_message(
                     chat_id=referrer_id,
@@ -132,11 +204,32 @@ async def check_joined_callback(update: Update, context: ContextTypes.DEFAULT_TY
             except Exception:
                 pass
 
-        await query.message.delete()
-        await context.bot.send_message(chat_id=user_id, text="✅ Verification complete! Welcome to the bot.")
-        await send_main_menu_direct(user_id, context)
-    else:
-        await query.message.reply_text("❌ Membership not verified! Please ensure you have joined the Telegram Group and WhatsApp channel.")
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="✅ **WhatsApp Verification Approved!**\n\nWelcome to the bot! Tap /start to open the main menu."
+            )
+        except Exception:
+            pass
+
+        if query.message.photo:
+            await query.edit_message_caption(caption=query.message.caption + "\n\n🟢 **WA VERIFIED**")
+        else:
+            await query.edit_message_text(text=query.message.text + "\n\n🟢 **WA VERIFIED**")
+
+    elif action == "rwa":
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="❌ **WhatsApp Verification Rejected.**\nPlease ensure you join the WhatsApp channel and submit valid proof."
+            )
+        except Exception:
+            pass
+
+        if query.message.photo:
+            await query.edit_message_caption(caption=query.message.caption + "\n\n🔴 **WA REJECTED**")
+        else:
+            await query.edit_message_text(text=query.message.text + "\n\n🔴 **WA REJECTED**")
 
 
 async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -146,15 +239,6 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("Welcome to the main menu! Select an option below:", reply_markup=reply_markup)
-
-
-async def send_main_menu_direct(chat_id, context):
-    keyboard = [
-        ["💰 Balance / Wallet", "👥 Refer & Earn"],
-        ["💸 Withdraw"]
-    ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await context.bot.send_message(chat_id=chat_id, text="Welcome to the main menu! Select an option below:", reply_markup=reply_markup)
 
 
 async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -283,7 +367,7 @@ async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cancel_withdrawal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Withdrawal process cancelled.")
+    await update.message.reply_text("❌ Process cancelled.")
     return ConversationHandler.END
 
 
@@ -309,7 +393,7 @@ async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_
 
     elif action == "rej":
         user_data = get_user_data(context, user_id)
-        user_data["balance"] += amount  # Refund balance back to user if rejected
+        user_data["balance"] += amount
         try:
             await context.bot.send_message(
                 chat_id=user_id,
@@ -321,7 +405,6 @@ async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text(text=query.message.text + "\n\n🔴 **STATUS: REJECTED**", parse_mode="Markdown")
 
 
-# --- ADMIN PANEL COMMAND ---
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -339,7 +422,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👥 **Total Registered Users:** {total_users}\n"
         f"💰 **Total Active User Balances:** ₦{total_balance}\n"
         f"🔗 **Total Successful Referrals:** {total_referrals}\n\n"
-        f"📌 *Withdrawal approvals are managed in your Admin Channel.*"
+        f"📌 *Withdrawal & WA approvals are managed in your Admin Channel.*"
     )
     await update.message.reply_text(stats_msg, parse_mode="Markdown")
 
@@ -347,7 +430,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     threading.Thread(target=run_health_check_server, daemon=True).start()
 
-    # Enable persistent storage saved to disk
     persistence = PicklePersistence(filepath="bot_data.pkl")
 
     app = (
@@ -371,9 +453,18 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel_withdrawal)],
     )
 
+    wa_proof_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(check_joined_callback, pattern="^check_joined$")],
+        states={
+            WA_PROOF: [MessageHandler(filters.TEXT | filters.PHOTO, receive_wa_proof)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel_withdrawal)],
+    )
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
-    app.add_handler(CallbackQueryHandler(check_joined_callback, pattern="^check_joined$"))
+    app.add_handler(wa_proof_handler)
+    app.add_handler(CallbackQueryHandler(admin_wa_decision_callback, pattern="^(vwa|rwa)_"))
     app.add_handler(CallbackQueryHandler(admin_decision_callback, pattern="^(app|rej)_"))
 
     app.add_handler(MessageHandler(filters.Regex("(?i).*(balance|wallet).*"), show_balance))
@@ -386,4 +477,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+            
