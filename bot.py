@@ -15,18 +15,18 @@ from telegram.ext import (
 )
 
 # ==================== CONFIGURATION ====================
-# Correct format:
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8361977048:AAE1hukuUYJsgtE7uwNRTL5oZpmsNdJU6Ns")
-
 
 WHATSAPP_LINK = "https://whatsapp.com/channel/0029VbDyRS18F2p6910NlS1j"
 TELEGRAM_GROUP_LINK = "https://t.me/Vickyupdatemayor"
 
 TELEGRAM_GROUP_USERNAME = "@Vickyupdatemayor"
-ADMIN_CHANNEL_ID = -6225743234  # Replace with your numeric Admin Channel ID
+
+# Replace with your actual numeric admin channel ID (must start with -100)
+ADMIN_CHANNEL_ID = -1004487917080  
 
 MIN_WITHDRAWAL = 300
-REFERRAL_BONUS = 80
+REFERRAL_BONUS = 70
 # =======================================================
 
 logging.basicConfig(
@@ -359,3 +359,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+        
