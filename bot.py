@@ -22,8 +22,8 @@ TELEGRAM_GROUP_LINK = "https://t.me/Vickyupdatemayor"
 
 TELEGRAM_GROUP_USERNAME = "@Vickyupdatemayor"
 
-# Numeric ID of your Admin Channel (starts with -100)
-ADMIN_CHANNEL_ID = -1009876543210  
+# Numeric ID of your Admin Channel (-1004487917080)
+ADMIN_CHANNEL_ID = -1004487917080  
 
 # YOUR Personal Telegram User ID (6225743234)
 ADMIN_USER_ID = -1004487917080  
