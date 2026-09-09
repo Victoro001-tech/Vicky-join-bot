@@ -27,8 +27,8 @@ ADMIN_CHANNEL_ID = -1009876543210
 # YOUR Personal Telegram User ID (Get yours from @userinfobot)
 ADMIN_USER_ID = 123456789  
 
-MIN_WITHDRAWAL = 600
-REFERRAL_BONUS = 100
+MIN_WITHDRAWAL = 300
+REFERRAL_BONUS = 80
 # =======================================================
 
 logging.basicConfig(
