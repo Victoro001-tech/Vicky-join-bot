@@ -22,11 +22,14 @@ TELEGRAM_GROUP_LINK = "https://t.me/Vickyupdatemayor"
 
 TELEGRAM_GROUP_USERNAME = "@Vickyupdatemayor"
 
-# Replace with your actual numeric admin channel ID (must start with -100)
-ADMIN_CHANNEL_ID = -1004487917080  
+# Numeric ID of your Admin Channel (starts with -100)
+ADMIN_CHANNEL_ID = -1009876543210  
+
+# YOUR Personal Telegram User ID (6225743234)
+ADMIN_USER_ID = -1004487917080  
 
 MIN_WITHDRAWAL = 300
-REFERRAL_BONUS = 70
+REFERRAL_BONUS = 90
 # =======================================================
 
 logging.basicConfig(
@@ -318,6 +321,29 @@ async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text(text=query.message.text + "\n\n🔴 **STATUS: REJECTED**", parse_mode="Markdown")
 
 
+# --- ADMIN PANEL COMMAND ---
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if ADMIN_USER_ID != 123456789 and user_id != ADMIN_USER_ID:
+        await update.message.reply_text("❌ You are not authorized to use the admin panel.")
+        return
+
+    users = context.bot_data.get("users", {})
+    total_users = len(users)
+    total_balance = sum(u.get("balance", 0) for u in users.values())
+    total_referrals = sum(u.get("referrals", 0) for u in users.values())
+
+    stats_msg = (
+        f"⚙️ **Admin Dashboard**\n\n"
+        f"👥 **Total Registered Users:** {total_users}\n"
+        f"💰 **Total Active User Balances:** ₦{total_balance}\n"
+        f"🔗 **Total Successful Referrals:** {total_referrals}\n\n"
+        f"📌 *Withdrawal approvals are managed in your Admin Channel.*"
+    )
+    await update.message.reply_text(stats_msg, parse_mode="Markdown")
+
+
 def main():
     threading.Thread(target=run_health_check_server, daemon=True).start()
 
@@ -346,6 +372,7 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CallbackQueryHandler(check_joined_callback, pattern="^check_joined$"))
     app.add_handler(CallbackQueryHandler(admin_decision_callback, pattern="^(app|rej)_"))
 
@@ -359,4 +386,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+    
