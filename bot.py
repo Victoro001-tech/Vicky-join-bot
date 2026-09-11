@@ -21,11 +21,11 @@ WHATSAPP_LINK = "https://whatsapp.com/channel/0029VbDyRS18F2p6910NlS1j"
 TELEGRAM_GROUP_LINK = "https://t.me/Vickyupdatemayor"
 TELEGRAM_GROUP_USERNAME = "@Vickyupdatemayor"
 
-# Numeric ID of your Admin Channel (starts with -100)
-ADMIN_CHANNEL_ID = -1009876543210  
+# Numeric ID of your Admin Channel (MUST start with -100)
+ADMIN_CHANNEL_ID = -1004487917080  # Replace with your real Admin Channel ID
 
 # YOUR Personal Telegram User ID (Get yours from @userinfobot)
-ADMIN_USER_ID = 123456789  
+ADMIN_USER_ID = 6225743234  # Replace with your personal Telegram ID
 
 MIN_WITHDRAWAL = 150
 REFERRAL_BONUS = 75
@@ -135,7 +135,7 @@ async def check_joined_callback(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return WA_PROOF
 
-    await process_full_verification(context, user_id, query.message)
+    await send_main_menu_direct(user_id, context)
 
 
 async def receive_wa_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -155,23 +155,26 @@ async def receive_wa_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👤 User: {user.full_name} (`{user_id}`)\n"
     )
 
-    if update.message.photo:
-        photo_id = update.message.photo[-1].file_id
-        await context.bot.send_photo(
-            chat_id=ADMIN_CHANNEL_ID,
-            photo=photo_id,
-            caption=admin_msg + "🖼 Proof: Screenshot attached below.",
-            reply_markup=admin_markup,
-            parse_mode="Markdown"
-        )
-    else:
-        proof_text = update.message.text
-        await context.bot.send_message(
-            chat_id=ADMIN_CHANNEL_ID,
-            text=admin_msg + f"💬 Proof Text: `{proof_text}`",
-            reply_markup=admin_markup,
-            parse_mode="Markdown"
-        )
+    try:
+        if update.message.photo:
+            photo_id = update.message.photo[-1].file_id
+            await context.bot.send_photo(
+                chat_id=ADMIN_CHANNEL_ID,
+                photo=photo_id,
+                caption=admin_msg + "🖼 Proof: Screenshot attached below.",
+                reply_markup=admin_markup,
+                parse_mode="Markdown"
+            )
+        else:
+            proof_text = update.message.text
+            await context.bot.send_message(
+                chat_id=ADMIN_CHANNEL_ID,
+                text=admin_msg + f"💬 Proof Text: `{proof_text}`",
+                reply_markup=admin_markup,
+                parse_mode="Markdown"
+            )
+    except Exception as e:
+        logging.error(f"Failed to send proof to admin channel: {e}")
 
     await update.message.reply_text("✅ Proof submitted! Your WhatsApp verification request is under admin review.")
     return ConversationHandler.END
@@ -239,6 +242,15 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("Welcome to the main menu! Select an option below:", reply_markup=reply_markup)
+
+
+async def send_main_menu_direct(chat_id, context):
+    keyboard = [
+        ["💰 Balance / Wallet", "👥 Refer & Earn"],
+        ["💸 Withdraw"]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await context.bot.send_message(chat_id=chat_id, text="Welcome to the main menu! Select an option below:", reply_markup=reply_markup)
 
 
 async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -360,7 +372,11 @@ async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👤 Acc Name: {data['acc_name']}"
     )
 
-    await context.bot.send_message(chat_id=ADMIN_CHANNEL_ID, text=admin_msg, reply_markup=admin_markup, parse_mode="Markdown")
+    try:
+        await context.bot.send_message(chat_id=ADMIN_CHANNEL_ID, text=admin_msg, reply_markup=admin_markup, parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Failed to send withdrawal to admin channel: {e}")
+
     await update.message.reply_text("✅ Your withdrawal request has been submitted to the admin for review!")
 
     return ConversationHandler.END
@@ -477,4 +493,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-            
+    
