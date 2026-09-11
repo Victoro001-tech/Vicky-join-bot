@@ -23,13 +23,13 @@ TELEGRAM_GROUP_LINK = "https://t.me/Vickyupdatemayor"
 TELEGRAM_GROUP_USERNAME = "@Vickyupdatemayor"
 
 # Numeric ID of your Admin Channel (MUST start with -100)
-ADMIN_CHANNEL_ID = -1001234567890  # Replace with your real Admin Channel ID
+ADMIN_CHANNEL_ID = -100448791708  # Replace with your real Admin Channel ID
 
 # YOUR Personal Telegram User ID (Get yours from @userinfobot)
-ADMIN_USER_ID = 123456789  # Replace with your personal Telegram ID
+ADMIN_USER_ID = 6225743234  # Replace with your personal Telegram ID
 
-MIN_WITHDRAWAL = 600
-REFERRAL_BONUS = 100
+MIN_WITHDRAWAL = 150
+REFERRAL_BONUS = 75
 # =======================================================
 
 logging.basicConfig(
