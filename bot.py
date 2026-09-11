@@ -1,6 +1,7 @@
 import logging
 import os
 import threading
+import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -22,13 +23,13 @@ TELEGRAM_GROUP_LINK = "https://t.me/Vickyupdatemayor"
 TELEGRAM_GROUP_USERNAME = "@Vickyupdatemayor"
 
 # Numeric ID of your Admin Channel (MUST start with -100)
-ADMIN_CHANNEL_ID = -100448791708  # Replace with your real Admin Channel ID
+ADMIN_CHANNEL_ID = -1001234567890  # Replace with your real Admin Channel ID
 
 # YOUR Personal Telegram User ID (Get yours from @userinfobot)
-ADMIN_USER_ID = 6225743234  # Replace with your personal Telegram ID
+ADMIN_USER_ID = 123456789  # Replace with your personal Telegram ID
 
-MIN_WITHDRAWAL = 150
-REFERRAL_BONUS = 75
+MIN_WITHDRAWAL = 600
+REFERRAL_BONUS = 100
 # =======================================================
 
 logging.basicConfig(
@@ -53,7 +54,7 @@ def run_health_check_server():
     server.serve_forever()
 
 
-# --- PERSISTENT DATA HELPER ---
+# --- PERSISTENT DATA HELPERS ---
 def get_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     if "users" not in context.bot_data:
         context.bot_data["users"] = {}
@@ -70,6 +71,12 @@ def get_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int):
             "wa_verified": False
         }
     return context.bot_data["users"][user_id]
+
+
+def get_pending_withdrawals(context: ContextTypes.DEFAULT_TYPE):
+    if "pending_withdrawals" not in context.bot_data:
+        context.bot_data["pending_withdrawals"] = {}
+    return context.bot_data["pending_withdrawals"]
 
 
 async def is_user_subscribed_tg(bot, user_id):
@@ -102,13 +109,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "⚠️ **Mandatory Verification Required!**\n\n"
+            "⚠️ <b>Mandatory Verification Required!</b>\n\n"
             "To access the bot and start earning, you must join both channels below:\n\n"
-            "1. Join our **WhatsApp Channel**\n"
-            "2. Join our **Telegram Group**\n\n"
-            "Click **Joined ✅** once completed.",
+            "1. Join our <b>WhatsApp Channel</b>\n"
+            "2. Join our <b>Telegram Group</b>\n\n"
+            "Click <b>Joined ✅</b> once completed.",
             reply_markup=reply_markup,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         return
 
@@ -129,8 +136,9 @@ async def check_joined_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     if not user_data.get("wa_verified", False):
         await query.message.reply_text(
-            "📲 **WhatsApp Verification Required**\n\n"
-            "Please send your **WhatsApp Name or Phone Number** (or send a screenshot proving you joined the channel) right here:"
+            "📲 <b>WhatsApp Verification Required</b>\n\n"
+            "Please send your <b>WhatsApp Name or Phone Number</b> (or send a screenshot proving you joined the channel) right here:",
+            parse_mode="HTML"
         )
         return WA_PROOF
 
@@ -141,10 +149,8 @@ async def receive_wa_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_data = get_user_data(context, user_id)
 
-    # Automatically mark WhatsApp as verified
     user_data["wa_verified"] = True
 
-    # Credit referral bonus to the inviter instantly
     referrer_id = user_data.get("referred_by")
     if referrer_id and not user_data.get("bonus_credited"):
         ref_data = get_user_data(context, referrer_id)
@@ -154,12 +160,13 @@ async def receive_wa_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=referrer_id,
-                text=f"🎉 **New Referral!** You earned ₦{REFERRAL_BONUS}. Your new balance is ₦{ref_data['balance']}."
+                text=f"🎉 <b>New Referral!</b> You earned ₦{REFERRAL_BONUS}. Your new balance is ₦{ref_data['balance']}.",
+                parse_mode="HTML"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error(f"Failed to notify referrer {referrer_id}: {e}")
 
-    await update.message.reply_text("✅ **Verification Successful!** Welcome to the bot.")
+    await update.message.reply_text("✅ <b>Verification Successful!</b> Welcome to the bot.", parse_mode="HTML")
     await send_main_menu(update, context)
     return ConversationHandler.END
 
@@ -186,12 +193,12 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     data = get_user_data(context, user_id)
     text = (
-        f"💼 **Your Wallet**\n\n"
+        f"💼 <b>Your Wallet</b>\n\n"
         f"💰 Balance: ₦{data['balance']}\n"
         f"👥 Total Referrals: {data['referrals']}\n\n"
-        f"📌 *Minimum withdrawal limit is ₦{MIN_WITHDRAWAL}*"
+        f"📌 <i>Minimum withdrawal limit is ₦{MIN_WITHDRAWAL}</i>"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(text, parse_mode="HTML")
 
 
 async def show_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -201,11 +208,11 @@ async def show_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ref_link = f"https://t.me/{bot_username}?start={user_id}"
     
     text = (
-        f"👥 **Refer & Earn Program**\n\n"
-        f"Share your link below with friends. Earn **₦{REFERRAL_BONUS}** instantly for every user who joins using your link!\n\n"
-        f"🔗 Your referral link:\n`{ref_link}`"
+        f"👥 <b>Refer & Earn Program</b>\n\n"
+        f"Share your link below with friends. Earn <b>₦{REFERRAL_BONUS}</b> instantly for every user who joins using your link!\n\n"
+        f"🔗 Your referral link:\n<code>{ref_link}</code>"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(text, parse_mode="HTML")
 
 
 async def start_withdrawal(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -214,9 +221,9 @@ async def start_withdrawal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data["balance"] < MIN_WITHDRAWAL:
         await update.message.reply_text(
-            f"❌ Insufficient balance! Minimum withdrawal amount is **₦{MIN_WITHDRAWAL}**.\n"
+            f"❌ Insufficient balance! Minimum withdrawal amount is <b>₦{MIN_WITHDRAWAL}</b>.\n"
             f"Your current balance: ₦{data['balance']}",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         return ConversationHandler.END
 
@@ -225,21 +232,22 @@ async def start_withdrawal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["acc_num"] = data["acc_num"]
         context.user_data["acc_name"] = data["acc_name"]
         await update.message.reply_text(
-            f"🏦 **Saved Payment Details Found:**\n"
+            f"🏦 <b>Saved Payment Details Found:</b>\n"
             f"• Bank: {data['bank_name']}\n"
             f"• Account Number: {data['acc_num']}\n"
             f"• Account Name: {data['acc_name']}\n\n"
-            f"Enter the amount you wish to withdraw (Minimum ₦{MIN_WITHDRAWAL}):"
+            f"Enter the amount you wish to withdraw (Minimum ₦{MIN_WITHDRAWAL}):",
+            parse_mode="HTML"
         )
         return AMOUNT
 
-    await update.message.reply_text("🏦 Enter your **Bank Name** (e.g., Access Bank, OPay, Palmpay):")
+    await update.message.reply_text("🏦 Enter your <b>Bank Name</b> (e.g., Access Bank, OPay, Palmpay):", parse_mode="HTML")
     return BANK_NAME
 
 
 async def get_bank_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["bank_name"] = update.message.text.strip()
-    await update.message.reply_text("💳 Enter your **Account Number**:")
+    await update.message.reply_text("💳 Enter your <b>Account Number</b>:", parse_mode="HTML")
     return ACCOUNT_NUMBER
 
 
@@ -250,18 +258,19 @@ async def get_account_number(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ACCOUNT_NUMBER
 
     context.user_data["acc_num"] = acc_num
-    await update.message.reply_text("👤 Enter your **Account Name** (as registered on the bank account):")
+    await update.message.reply_text("👤 Enter your <b>Account Name</b> (as registered on the bank account):", parse_mode="HTML")
     return ACCOUNT_NAME
 
 
 async def get_account_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["acc_name"] = update.message.text.strip()
-    await update.message.reply_text(f"💵 Enter the amount to withdraw (Minimum ₦{MIN_WITHDRAWAL}):")
+    await update.message.reply_text(f"💵 Enter the amount to withdraw (Minimum ₦{MIN_WITHDRAWAL}):", parse_mode="HTML")
     return AMOUNT
 
 
 async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    user = update.effective_user
     data = get_user_data(context, user_id)
     text = update.message.text.strip()
 
@@ -284,30 +293,55 @@ async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data["acc_name"] = context.user_data["acc_name"]
     data["balance"] -= amount
 
+    # Generate Unique Request ID
+    req_id = str(uuid.uuid4())[:8]
+    
+    # Store request in pending queue
+    pending = get_pending_withdrawals(context)
+    pending[req_id] = {
+        "user_id": user_id,
+        "full_name": user.full_name,
+        "amount": amount,
+        "bank_name": data["bank_name"],
+        "acc_num": data["acc_num"],
+        "acc_name": data["acc_name"]
+    }
+
     admin_keyboard = [
         [
-            InlineKeyboardButton("✅ Approve", callback_data=f"app_{user_id}_{amount}"),
-            InlineKeyboardButton("❌ Reject", callback_data=f"rej_{user_id}_{amount}")
+            InlineKeyboardButton("✅ Approve", callback_data=f"app_{req_id}"),
+            InlineKeyboardButton("❌ Reject", callback_data=f"rej_{req_id}")
         ]
     ]
     admin_markup = InlineKeyboardMarkup(admin_keyboard)
 
+    full_name_clean = user.full_name.replace("<", "&lt;").replace(">", "&gt;")
+    bank_clean = data['bank_name'].replace("<", "&lt;").replace(">", "&gt;")
+    acc_name_clean = data['acc_name'].replace("<", "&lt;").replace(">", "&gt;")
+
     admin_msg = (
-        f"🚨 **New Withdrawal Request**\n\n"
-        f"👤 User: {update.effective_user.full_name} (`{user_id}`)\n"
+        f"🚨 <b>New Withdrawal Request</b> [ID: <code>{req_id}</code>]\n\n"
+        f"👤 User: {full_name_clean} (<code>{user_id}</code>)\n"
         f"💵 Amount: ₦{amount}\n"
-        f"🏦 Bank: {data['bank_name']}\n"
-        f"💳 Acc No: `{data['acc_num']}`\n"
-        f"👤 Acc Name: {data['acc_name']}"
+        f"🏦 Bank: {bank_clean}\n"
+        f"💳 Acc No: <code>{data['acc_num']}</code>\n"
+        f"👤 Acc Name: {acc_name_clean}"
     )
 
+    # Attempt sending to Admin Channel
     try:
-        await context.bot.send_message(chat_id=ADMIN_CHANNEL_ID, text=admin_msg, reply_markup=admin_markup, parse_mode="Markdown")
+        await context.bot.send_message(
+            chat_id=ADMIN_CHANNEL_ID,
+            text=admin_msg,
+            reply_markup=admin_markup,
+            parse_mode="HTML"
+        )
+        logging.info(f"Withdrawal request {req_id} sent to admin channel for user {user_id}")
     except Exception as e:
-        logging.error(f"Failed to send withdrawal to admin channel: {e}")
+        logging.error(f"CRITICAL: Could not deliver message to ADMIN_CHANNEL_ID ({ADMIN_CHANNEL_ID}): {e}")
+        logging.info(f"Request {req_id} is saved in pending storage and can be reviewed via /pending command.")
 
     await update.message.reply_text("✅ Your withdrawal request has been submitted to the admin for review!")
-
     return ConversationHandler.END
 
 
@@ -318,28 +352,38 @@ async def cancel_withdrawal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-
-    if ADMIN_USER_ID != 123456789 and query.from_user.id != ADMIN_USER_ID:
-        await query.answer("❌ Only the main admin is authorized to approve or reject requests!", show_alert=True)
-        return
-
     await query.answer()
 
     data = query.data.split("_")
     action = data[0]
-    user_id = int(data[1])
-    amount = int(data[2])
+    req_id = data[1]
+
+    pending = get_pending_withdrawals(context)
+
+    # Handle legacy callback format if user clicks old buttons
+    if len(data) == 3:
+        user_id = int(data[1])
+        amount = int(data[2])
+        req_id = None
+    else:
+        req_info = pending.get(req_id)
+        if not req_info and req_id is not None:
+            await query.edit_message_text("⚠️ This request was already processed.")
+            return
+        user_id = req_info["user_id"]
+        amount = req_info["amount"]
 
     if action == "app":
         try:
             await context.bot.send_message(
                 chat_id=user_id,
-                text=f"✅ **Withdrawal Approved!**\n\nYour withdrawal request for ₦{amount} has been processed.",
-                parse_mode="Markdown"
+                text=f"✅ <b>Withdrawal Approved!</b>\n\nYour withdrawal request for ₦{amount} has been processed.",
+                parse_mode="HTML"
             )
-        except Exception:
-            pass
-        await query.edit_message_text(text=query.message.text + "\n\n🟢 **STATUS: APPROVED**", parse_mode="Markdown")
+        except Exception as e:
+            logging.error(f"Failed to notify user {user_id} of approval: {e}")
+            
+        await query.edit_message_text(text=query.message.text_html + "\n\n🟢 <b>STATUS: APPROVED</b>", parse_mode="HTML")
 
     elif action == "rej":
         user_data = get_user_data(context, user_id)
@@ -347,12 +391,56 @@ async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_
         try:
             await context.bot.send_message(
                 chat_id=user_id,
-                text=f"❌ **Withdrawal Rejected.**\n\nYour withdrawal request for ₦{amount} was declined by the admin. The funds have been refunded to your wallet.",
-                parse_mode="Markdown"
+                text=f"❌ <b>Withdrawal Rejected.</b>\n\nYour withdrawal request for ₦{amount} was declined by the admin. The funds have been refunded to your wallet.",
+                parse_mode="HTML"
             )
-        except Exception:
-            pass
-        await query.edit_message_text(text=query.message.text + "\n\n🔴 **STATUS: REJECTED**", parse_mode="Markdown")
+        except Exception as e:
+            logging.error(f"Failed to notify user {user_id} of rejection: {e}")
+            
+        await query.edit_message_text(text=query.message.text_html + "\n\n🔴 <b>STATUS: REJECTED</b>", parse_mode="HTML")
+
+    # Clear from pending queue
+    if req_id and req_id in pending:
+        del pending[req_id]
+
+
+async def list_pending_withdrawals(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if ADMIN_USER_ID != 123456789 and user_id != ADMIN_USER_ID:
+        await update.message.reply_text("❌ You are not authorized to view pending withdrawals.")
+        return
+
+    pending = get_pending_withdrawals(context)
+
+    if not pending:
+        await update.message.reply_text("🎉 **No pending withdrawal requests found!**", parse_mode="Markdown")
+        return
+
+    await update.message.reply_text(f"📋 **Found {len(pending)} pending withdrawal request(s):**\n")
+
+    for req_id, req in list(pending.items()):
+        admin_keyboard = [
+            [
+                InlineKeyboardButton("✅ Approve", callback_data=f"app_{req_id}"),
+                InlineKeyboardButton("❌ Reject", callback_data=f"rej_{req_id}")
+            ]
+        ]
+        admin_markup = InlineKeyboardMarkup(admin_keyboard)
+
+        full_name_clean = req['full_name'].replace("<", "&lt;").replace(">", "&gt;")
+        bank_clean = req['bank_name'].replace("<", "&lt;").replace(">", "&gt;")
+        acc_name_clean = req['acc_name'].replace("<", "&lt;").replace(">", "&gt;")
+
+        msg = (
+            f"🚨 <b>Pending Request</b> [ID: <code>{req_id}</code>]\n\n"
+            f"👤 User: {full_name_clean} (<code>{req['user_id']}</code>)\n"
+            f"💵 Amount: ₦{req['amount']}\n"
+            f"🏦 Bank: {bank_clean}\n"
+            f"💳 Acc No: <code>{req['acc_num']}</code>\n"
+            f"👤 Acc Name: {acc_name_clean}"
+        )
+        await update.message.reply_text(msg, reply_markup=admin_markup, parse_mode="HTML")
 
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -363,18 +451,20 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     users = context.bot_data.get("users", {})
+    pending = context.bot_data.get("pending_withdrawals", {})
     total_users = len(users)
     total_balance = sum(u.get("balance", 0) for u in users.values())
     total_referrals = sum(u.get("referrals", 0) for u in users.values())
 
     stats_msg = (
-        f"⚙️ **Admin Dashboard**\n\n"
-        f"👥 **Total Registered Users:** {total_users}\n"
-        f"💰 **Total Active User Balances:** ₦{total_balance}\n"
-        f"🔗 **Total Successful Referrals:** {total_referrals}\n\n"
-        f"📌 *Withdrawal approvals are managed in your Admin Channel.*"
+        f"⚙️ <b>Admin Dashboard</b>\n\n"
+        f"👥 <b>Total Registered Users:</b> {total_users}\n"
+        f"💰 <b>Total Active User Balances:</b> ₦{total_balance}\n"
+        f"🔗 <b>Total Successful Referrals:</b> {total_referrals}\n"
+        f"⏳ <b>Pending Withdrawals:</b> {len(pending)}\n\n"
+        f"📌 <i>Type /pending to review all pending requests.</i>"
     )
-    await update.message.reply_text(stats_msg, parse_mode="Markdown")
+    await update.message.reply_text(stats_msg, parse_mode="HTML")
 
 
 def main():
@@ -413,6 +503,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler("pending", list_pending_withdrawals))
     app.add_handler(wa_proof_handler)
     app.add_handler(CallbackQueryHandler(admin_decision_callback, pattern="^(app|rej)_"))
 
@@ -426,4 +517,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
