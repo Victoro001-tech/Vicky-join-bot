@@ -130,7 +130,7 @@ async def check_joined_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if not user_data.get("wa_verified", False):
         await query.message.reply_text(
             "📲 **WhatsApp Verification Required**\n\n"
-            "Please send your **WhatsApp Name or Phone Number** (or send a screenshot proving you joined the channel) right here to submit for verification:"
+            "Please send your **WhatsApp Name or Phone Number** (or send a screenshot proving you joined the channel) right here:"
         )
         return WA_PROOF
 
@@ -138,105 +138,30 @@ async def check_joined_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def receive_wa_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    
-    admin_keyboard = [
-        [
-            InlineKeyboardButton("✅ Verify WA", callback_data=f"vwa_{user_id}"),
-            InlineKeyboardButton("❌ Reject WA", callback_data=f"rwa_{user_id}")
-        ]
-    ]
-    admin_markup = InlineKeyboardMarkup(admin_keyboard)
-
-    admin_msg = (
-        f"📲 **New WhatsApp Join Verification Request**\n\n"
-        f"👤 User: {user.full_name} (`{user_id}`)\n"
-    )
-
-    try:
-        if update.message.photo:
-            photo_id = update.message.photo[-1].file_id
-            await context.bot.send_photo(
-                chat_id=ADMIN_CHANNEL_ID,
-                photo=photo_id,
-                caption=admin_msg + "🖼 Proof: Screenshot attached below.",
-                reply_markup=admin_markup,
-                parse_mode="Markdown"
-            )
-        else:
-            proof_text = update.message.text
-            await context.bot.send_message(
-                chat_id=ADMIN_CHANNEL_ID,
-                text=admin_msg + f"💬 Proof Text: `{proof_text}`",
-                reply_markup=admin_markup,
-                parse_mode="Markdown"
-            )
-    except Exception as e:
-        logging.error(f"Failed to send proof to admin channel: {e}")
-
-    await update.message.reply_text("✅ Proof submitted! Your WhatsApp verification request is under admin review.")
-    return ConversationHandler.END
-
-
-async def admin_wa_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-
-    # Restrict button action to the primary admin only
-    if ADMIN_USER_ID != 123456789 and query.from_user.id != ADMIN_USER_ID:
-        await query.answer("❌ Only the main admin is authorized to approve or reject requests!", show_alert=True)
-        return
-
-    await query.answer()
-
-    data = query.data.split("_")
-    action = data[0]
-    user_id = int(data[1])
+    user_id = update.effective_user.id
     user_data = get_user_data(context, user_id)
 
-    if action == "vwa":
-        user_data["wa_verified"] = True
-        
-        referrer_id = user_data.get("referred_by")
-        if referrer_id and not user_data.get("bonus_credited"):
-            ref_data = get_user_data(context, referrer_id)
-            ref_data["balance"] += REFERRAL_BONUS
-            ref_data["referrals"] += 1
-            user_data["bonus_credited"] = True
-            try:
-                await context.bot.send_message(
-                    chat_id=referrer_id,
-                    text=f"🎉 **New Referral!** You earned ₦{REFERRAL_BONUS}. Your new balance is ₦{ref_data['balance']}."
-                )
-            except Exception:
-                pass
+    # Automatically mark WhatsApp as verified
+    user_data["wa_verified"] = True
 
+    # Credit referral bonus to the inviter instantly
+    referrer_id = user_data.get("referred_by")
+    if referrer_id and not user_data.get("bonus_credited"):
+        ref_data = get_user_data(context, referrer_id)
+        ref_data["balance"] += REFERRAL_BONUS
+        ref_data["referrals"] += 1
+        user_data["bonus_credited"] = True
         try:
             await context.bot.send_message(
-                chat_id=user_id,
-                text="✅ **WhatsApp Verification Approved!**\n\nWelcome to the bot! Tap /start to open the main menu."
+                chat_id=referrer_id,
+                text=f"🎉 **New Referral!** You earned ₦{REFERRAL_BONUS}. Your new balance is ₦{ref_data['balance']}."
             )
         except Exception:
             pass
 
-        if query.message.photo:
-            await query.edit_message_caption(caption=query.message.caption + "\n\n🟢 **WA VERIFIED**")
-        else:
-            await query.edit_message_text(text=query.message.text + "\n\n🟢 **WA VERIFIED**")
-
-    elif action == "rwa":
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="❌ **WhatsApp Verification Rejected.**\nPlease ensure you join the WhatsApp channel and submit valid proof."
-            )
-        except Exception:
-            pass
-
-        if query.message.photo:
-            await query.edit_message_caption(caption=query.message.caption + "\n\n🔴 **WA REJECTED**")
-        else:
-            await query.edit_message_text(text=query.message.text + "\n\n🔴 **WA REJECTED**")
+    await update.message.reply_text("✅ **Verification Successful!** Welcome to the bot.")
+    await send_main_menu(update, context)
+    return ConversationHandler.END
 
 
 async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -245,7 +170,7 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["💸 Withdraw"]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Welcome to the main menu! Select an option below:", reply_markup=reply_markup)
+    await update.message.reply_text("Select an option from the main menu below:", reply_markup=reply_markup)
 
 
 async def send_main_menu_direct(chat_id, context):
@@ -254,7 +179,7 @@ async def send_main_menu_direct(chat_id, context):
         ["💸 Withdraw"]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await context.bot.send_message(chat_id=chat_id, text="Welcome to the main menu! Select an option below:", reply_markup=reply_markup)
+    await context.bot.send_message(chat_id=chat_id, text="Select an option from the main menu below:", reply_markup=reply_markup)
 
 
 async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -394,7 +319,6 @@ async def cancel_withdrawal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
-    # Restrict button action to the primary admin only
     if ADMIN_USER_ID != 123456789 and query.from_user.id != ADMIN_USER_ID:
         await query.answer("❌ Only the main admin is authorized to approve or reject requests!", show_alert=True)
         return
@@ -448,7 +372,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👥 **Total Registered Users:** {total_users}\n"
         f"💰 **Total Active User Balances:** ₦{total_balance}\n"
         f"🔗 **Total Successful Referrals:** {total_referrals}\n\n"
-        f"📌 *Withdrawal & WA approvals are managed in your Admin Channel.*"
+        f"📌 *Withdrawal approvals are managed in your Admin Channel.*"
     )
     await update.message.reply_text(stats_msg, parse_mode="Markdown")
 
@@ -490,7 +414,6 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(wa_proof_handler)
-    app.add_handler(CallbackQueryHandler(admin_wa_decision_callback, pattern="^(vwa|rwa)_"))
     app.add_handler(CallbackQueryHandler(admin_decision_callback, pattern="^(app|rej)_"))
 
     app.add_handler(MessageHandler(filters.Regex("(?i).*(balance|wallet).*"), show_balance))
@@ -503,4 +426,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+        
