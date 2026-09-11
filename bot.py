@@ -22,13 +22,13 @@ TELEGRAM_GROUP_LINK = "https://t.me/Vickyupdatemayor"
 TELEGRAM_GROUP_USERNAME = "@Vickyupdatemayor"
 
 # Numeric ID of your Admin Channel (MUST start with -100)
-ADMIN_CHANNEL_ID = -1004487917080  # Replace with your real Admin Channel ID
+ADMIN_CHANNEL_ID = -1001234567890  # Replace with your real Admin Channel ID
 
 # YOUR Personal Telegram User ID (Get yours from @userinfobot)
-ADMIN_USER_ID = 6225743234  # Replace with your personal Telegram ID
+ADMIN_USER_ID = 123456789  # Replace with your personal Telegram ID
 
-MIN_WITHDRAWAL = 150
-REFERRAL_BONUS = 75
+MIN_WITHDRAWAL = 600
+REFERRAL_BONUS = 100
 # =======================================================
 
 logging.basicConfig(
@@ -91,7 +91,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if referrer_id != user_id and user_data["referred_by"] is None:
             user_data["referred_by"] = referrer_id
 
-    # Check both Telegram Group & WhatsApp Verification
     tg_joined = await is_user_subscribed_tg(context.bot, user_id)
     wa_verified = user_data.get("wa_verified", False)
 
@@ -182,6 +181,12 @@ async def receive_wa_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_wa_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+
+    # Restrict button action to the primary admin only
+    if ADMIN_USER_ID != 123456789 and query.from_user.id != ADMIN_USER_ID:
+        await query.answer("❌ Only the main admin is authorized to approve or reject requests!", show_alert=True)
+        return
+
     await query.answer()
 
     data = query.data.split("_")
@@ -192,7 +197,6 @@ async def admin_wa_decision_callback(update: Update, context: ContextTypes.DEFAU
     if action == "vwa":
         user_data["wa_verified"] = True
         
-        # Credit referral bonus if applicable
         referrer_id = user_data.get("referred_by")
         if referrer_id and not user_data.get("bonus_credited"):
             ref_data = get_user_data(context, referrer_id)
@@ -389,6 +393,12 @@ async def cancel_withdrawal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+
+    # Restrict button action to the primary admin only
+    if ADMIN_USER_ID != 123456789 and query.from_user.id != ADMIN_USER_ID:
+        await query.answer("❌ Only the main admin is authorized to approve or reject requests!", show_alert=True)
+        return
+
     await query.answer()
 
     data = query.data.split("_")
