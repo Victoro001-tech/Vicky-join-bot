@@ -18,15 +18,24 @@ from telegram.ext import (
 # ==================== CONFIGURATION ====================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8361977048:AAE1hukuUYJsgtE7uwNRTL5oZpmsNdJU6Ns")
 
+# Channels for Force Sub
 WHATSAPP_LINK = "https://whatsapp.com/channel/0029VbDyRS18F2p6910NlS1j"
-TELEGRAM_GROUP_LINK = "https://t.me/Vickyupdatemayor"
-TELEGRAM_GROUP_USERNAME = "@Vickyupdatemayor"
+
+# Telegram Channels (Links & Usernames)
+TG_CHANNEL_1_LINK = "https://t.me/Vickyupdatemayor"
+TG_CHANNEL_1_USERNAME = "@Vickyupdatemayor"
+
+TG_CHANNEL_2_LINK = "https://t.me/pandalooker20"
+TG_CHANNEL_2_USERNAME = "@pandalooker20"
+
+TG_CHANNEL_3_LINK = "https://t.me/EmmanuelUnitedArena01"
+TG_CHANNEL_3_USERNAME = "@EmmanuelUnitedArena01"
 
 # Numeric ID of your Admin Channel (MUST start with -100)
-ADMIN_CHANNEL_ID = -100448791708  # Replace with your real Admin Channel ID
+ADMIN_CHANNEL_ID = -1004487917080 
 
-# YOUR Personal Telegram User ID (Get yours from @userinfobot)
-ADMIN_USER_ID = 6225743234  # Replace with your personal Telegram ID
+# Your Personal Telegram User ID
+ADMIN_USER_ID = 6015884366 
 
 MIN_WITHDRAWAL = 500
 REFERRAL_BONUS = 50
@@ -41,7 +50,7 @@ BANK_NAME, ACCOUNT_NUMBER, ACCOUNT_NAME, AMOUNT = range(4)
 WA_PROOF = 4
 
 
-# --- HEALTH CHECK SERVER ---
+# --- HEALTH CHECK SERVER FOR HOSTING (RENDER) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -79,20 +88,27 @@ def get_pending_withdrawals(context: ContextTypes.DEFAULT_TYPE):
     return context.bot_data["pending_withdrawals"]
 
 
+# Check membership across all 3 Telegram channels
 async def is_user_subscribed_tg(bot, user_id):
-    try:
-        member = await bot.get_chat_member(chat_id=TELEGRAM_GROUP_USERNAME, user_id=user_id)
-        return member.status in ["member", "administrator", "creator"]
-    except Exception as e:
-        logging.error(f"Error checking Telegram subscription: {e}")
-        return False
+    channels = [TG_CHANNEL_1_USERNAME, TG_CHANNEL_2_USERNAME, TG_CHANNEL_3_USERNAME]
+    for channel in channels:
+        try:
+            member = await bot.get_chat_member(chat_id=channel, user_id=user_id)
+            if member.status not in ["member", "administrator", "creator"]:
+                return False
+        except Exception as e:
+            logging.error(f"Error checking Telegram subscription for {channel}: {e}")
+            return False
+    return True
 
 
+# --- START COMMAND & VERIFICATION ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     user_data = get_user_data(context, user_id)
 
+    # Process Referral Deep Link
     if context.args and context.args[0].isdigit():
         referrer_id = int(context.args[0])
         if referrer_id != user_id and user_data["referred_by"] is None:
@@ -104,16 +120,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (tg_joined and wa_verified):
         keyboard = [
             [InlineKeyboardButton("1️⃣ Join WhatsApp Channel 🟢", url=WHATSAPP_LINK)],
-            [InlineKeyboardButton("2️⃣ Join Telegram Group ✈️", url=TELEGRAM_GROUP_LINK)],
-            [InlineKeyboardButton("Joined ✅", callback_data="check_joined")]
+            [InlineKeyboardButton("2️⃣ Join Vickyupdatemayor ✈️", url=TG_CHANNEL_1_LINK)],
+            [InlineKeyboardButton("3️⃣ Join Panda Looker 📢", url=TG_CHANNEL_2_LINK)],
+            [InlineKeyboardButton("4️⃣ Join Emmanuel United Arena 📢", url=TG_CHANNEL_3_LINK)],
+            [InlineKeyboardButton("Joined All ✅", callback_data="check_joined")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
             "⚠️ <b>Mandatory Verification Required!</b>\n\n"
-            "To access the bot and start earning, you must join both channels below:\n\n"
+            "To access the bot and start earning, you must join all required channels below:\n\n"
             "1. Join our <b>WhatsApp Channel</b>\n"
-            "2. Join our <b>Telegram Group</b>\n\n"
-            "Click <b>Joined ✅</b> once completed.",
+            "2. Join <b>Vickyupdatemayor</b>\n"
+            "3. Join <b>Panda Looker</b>\n"
+            "4. Join <b>Emmanuel United Arena</b>\n\n"
+            "Click <b>Joined All ✅</b> once completed.",
             reply_markup=reply_markup,
             parse_mode="HTML"
         )
@@ -131,7 +151,7 @@ async def check_joined_callback(update: Update, context: ContextTypes.DEFAULT_TY
     tg_joined = await is_user_subscribed_tg(context.bot, user_id)
     
     if not tg_joined:
-        await query.message.reply_text("❌ You have not joined our Telegram group yet! Please join and try again.")
+        await query.message.reply_text("❌ You have not joined all 3 Telegram channels yet! Please join all of them and try again.")
         return
 
     if not user_data.get("wa_verified", False):
@@ -151,6 +171,7 @@ async def receive_wa_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_data["wa_verified"] = True
 
+    # Credit Referrer
     referrer_id = user_data.get("referred_by")
     if referrer_id and not user_data.get("bonus_credited"):
         ref_data = get_user_data(context, referrer_id)
@@ -171,6 +192,7 @@ async def receive_wa_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+# --- MENUS & USER DASHBOARD ---
 async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         ["💰 Balance / Wallet", "👥 Refer & Earn"],
@@ -215,6 +237,7 @@ async def show_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="HTML")
 
 
+# --- WITHDRAWAL PROCESS ---
 async def start_withdrawal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     data = get_user_data(context, user_id)
@@ -293,10 +316,8 @@ async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data["acc_name"] = context.user_data["acc_name"]
     data["balance"] -= amount
 
-    # Generate Unique Request ID
     req_id = str(uuid.uuid4())[:8]
     
-    # Store request in pending queue
     pending = get_pending_withdrawals(context)
     pending[req_id] = {
         "user_id": user_id,
@@ -328,7 +349,6 @@ async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👤 Acc Name: {acc_name_clean}"
     )
 
-    # Attempt sending to Admin Channel
     try:
         await context.bot.send_message(
             chat_id=ADMIN_CHANNEL_ID,
@@ -336,10 +356,9 @@ async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=admin_markup,
             parse_mode="HTML"
         )
-        logging.info(f"Withdrawal request {req_id} sent to admin channel for user {user_id}")
+        logging.info(f"Withdrawal request {req_id} sent to admin channel.")
     except Exception as e:
-        logging.error(f"CRITICAL: Could not deliver message to ADMIN_CHANNEL_ID ({ADMIN_CHANNEL_ID}): {e}")
-        logging.info(f"Request {req_id} is saved in pending storage and can be reviewed via /pending command.")
+        logging.error(f"Could not deliver to ADMIN_CHANNEL_ID ({ADMIN_CHANNEL_ID}): {e}")
 
     await update.message.reply_text("✅ Your withdrawal request has been submitted to the admin for review!")
     return ConversationHandler.END
@@ -350,6 +369,7 @@ async def cancel_withdrawal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+# --- ADMIN CONTROLS ---
 async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -360,7 +380,6 @@ async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_
 
     pending = get_pending_withdrawals(context)
 
-    # Handle legacy callback format if user clicks old buttons
     if len(data) == 3:
         user_id = int(data[1])
         amount = int(data[2])
@@ -399,7 +418,6 @@ async def admin_decision_callback(update: Update, context: ContextTypes.DEFAULT_
             
         await query.edit_message_text(text=query.message.text_html + "\n\n🔴 <b>STATUS: REJECTED</b>", parse_mode="HTML")
 
-    # Clear from pending queue
     if req_id and req_id in pending:
         del pending[req_id]
 
@@ -414,10 +432,10 @@ async def list_pending_withdrawals(update: Update, context: ContextTypes.DEFAULT
     pending = get_pending_withdrawals(context)
 
     if not pending:
-        await update.message.reply_text("🎉 **No pending withdrawal requests found!**", parse_mode="Markdown")
+        await update.message.reply_text("🎉 <b>No pending withdrawal requests found!</b>", parse_mode="HTML")
         return
 
-    await update.message.reply_text(f"📋 **Found {len(pending)} pending withdrawal request(s):**\n")
+    await update.message.reply_text(f"📋 <b>Found {len(pending)} pending withdrawal request(s):</b>\n", parse_mode="HTML")
 
     for req_id, req in list(pending.items()):
         admin_keyboard = [
@@ -467,6 +485,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(stats_msg, parse_mode="HTML")
 
 
+# --- MAIN ENTRY POINT ---
 def main():
     threading.Thread(target=run_health_check_server, daemon=True).start()
 
